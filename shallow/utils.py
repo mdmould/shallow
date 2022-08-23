@@ -11,6 +11,15 @@ def timer(func, *args, **kwargs):
     return result
 
 
+def seeder(seed, func, *args, **kwargs):
+    
+    np.random.seed(seed)
+    result = func(*args, **kwargs)
+    np.random.seed()
+    
+    return result
+
+
 def _process_data(data):
 
     # data has shape (n_samples, n_dimensions,)
