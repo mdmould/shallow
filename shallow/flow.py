@@ -215,7 +215,7 @@ def _recurrsive_kwargs(bijector, name_to_kwargs):
 
     if hasattr(bijector, 'bijectors'):
         return {
-            b.name: make_bijector_kwargs(b, name_to_kwargs)
+            b.name: _recurrsive_kwargs(b, name_to_kwargs)
             for b in bijector.bijectors
             }
     else:

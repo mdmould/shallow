@@ -1,6 +1,7 @@
 import numpy as np
 
-from .utils import _process_data
+
+_all__ = ['Affine', 'Whiten', 'MinMax']
 
 
 class Affine:
@@ -8,7 +9,7 @@ class Affine:
     def __init__(self, scale=1., shift=0.):
         
         self.scale = scale
-        self.shift = shift
+        self.shift = shfit
         
     def forward(self, x):
         
@@ -36,25 +37,25 @@ class Affine:
 
 
 class Whiten(Affine):
-    
+
     def __init__(self, data):
-        
-        data = _process_data(data)
-        mean = data.mean(axis=0)
-        std = data.std(axis=0)
+
+        # data has shape (n_samples, n_dimensions,)
+        mean = np.mean(data, axis=0)
+        std = np.std(data, axis=0)
         scale = 1. / std
-        shift = -mean * scale
+        shift = -mean / std
         super().__init__(scale=scale, shift=shift)
 
 
 class MinMax(Affine):
-    
+
     def __init__(self, data):
-        
-        data = _process_data(data)
-        minimum = data.min(axis=0)
-        maximum = data.max(axis=0)
+
+        # data has shape (n_samples, n_dimensions)
+        minimum = np.min(data, axis=0)
+        maximum = np.max(data, axis=0)
         scale = 1. / (maximum - minimum)
-        shift = -minimum * scale
-        super().__init__(shift=shift, scale=scale)
+        shift = -minimum / (maximum -minimum)
+        super().__init__(scale=scale, shift=shift)
 

@@ -2,6 +2,9 @@ import time
 import numpy as np
 
 
+__all__ = ['timer', 'seeder']
+
+
 def timer(func, *args, **kwargs):
     
     t0 = time.time()
@@ -20,12 +23,17 @@ def seeder(seed, func, *args, **kwargs):
     return result
 
 
-def _process_data(data):
+def _process_data(data, transpose=False):
 
     # data has shape (n_samples, n_dimensions,)
     data = np.atleast_2d(data)
     assert data.ndim == 2
-    assert data.shape[0] > data.shape[1]
-
+    
+    ordered = data.shape[0] > data.shape[1]
+    if transpose:
+        if not ordered:
+            return data.T
+    assert ordered
+    
     return data
 

@@ -52,7 +52,7 @@ class Model:
     
     def train(
         self, x, y, validation_data=None, epochs=1, batch_size=1,
-        learning_rate=.001, optimizer='adam', loss=None, stop=None, save=False,
+        learning_rate=.001, optimizer='adam', loss=None, stop=None, name=None,
         callbacks=[], name=None, verbose=1,
         ):
         
@@ -86,8 +86,7 @@ class Model:
                 verbose=verbose, mode='min', baseline=None,
                 restore_best_weights=True,
                 )]
-        if save:
-            name = './model' if name is None else name
+        if name is not None:
             if os.path.exists(name+'.h5') or os.path.exists(name+'.csv'):
                 name += '_'.join(str(datetime.datetime.now()).split('_'))
             callbacks += [
