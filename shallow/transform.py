@@ -21,19 +21,19 @@ class Affine:
     
     def jac_forward(self, x):
         
-        return self.scale
+        return np.product(self.scale)
     
     def jac_inverse(self, y):
         
-        return 1. / self.scale
+        return np.product(1. / self.scale)
     
     def log_jac_forward(self, x):
         
-        return np.log(self.scale)
+        return np.sum(np.log(self.scale))
     
     def log_jac_inverse(self, y):
         
-        return -np.log(self.scale)
+        return np.sum(-np.log(self.scale))
 
 
 class Whiten(Affine):
