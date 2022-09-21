@@ -17,7 +17,13 @@ setup(
     author_email='mattdmould@gmail.com',
     license='MIT',
     packages=find_packages(),
-    install_requires=['numpy', 'tensorflow', 'tensorflow-probability'],
+    install_requires=[
+        'numpy',
+        'tensorflow',
+        'tensorflow-probability',
+        'torch',
+        'nflows',
+        ],
     python_requires='>=3.7',
     )
 

@@ -2,9 +2,6 @@ import time
 import numpy as np
 
 
-__all__ = ['timer', 'seeder']
-
-
 def timer(func, *args, **kwargs):
     
     t0 = time.time()

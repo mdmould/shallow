@@ -1,13 +1,108 @@
+import os
+import re
+from datetime import datetime
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
-import re
 
 tfk = tf.keras
 tfb = tfp.bijectors
 tfd = tfp.distributions
 
-from .model import Model
+from .utils import _process_data
+
+
+def train(
+    model, x, y, validation=None, epochs=1, batch_size=1, learning_rate=1e-3,
+    optimizer='adam', loss=None, stop=None, name=None, callbacks=[], name=None,
+    verbose=1,
+    ):
+    
+    x = _process_data(x)
+    y = _process_data(y)
+    if validation_data is not None:
+        assert len(validation_data) == 2
+        validation_data = list(
+            _process_data(validation_data[0]),
+            _process_data(validation_data[1]),
+            )
+        
+    if model._x_transform is not None:
+        x = model._x_transform(x)
+        if validation_data is not None:
+            validation_data[0] = model._x_transform(validation_data[0])
+    if model._y_transform is not None:
+        y = model._y_transform(y)
+        if validation_data is not None:
+            validation_data[1] = model._y_transform(validation_data[1])
+            
+    if type(optimizer) is str:
+        optimizer = dict(
+            class_name=optimizer, config=dict(learning_rate=learning_rate),
+            )
+    optimizer = tfk.optimizers.get(optimizer)
+    loss = tfk.losses.get(loss) if model._loss is None else model._loss
+    
+    callbacks += [tfk.callbacks.TerminateOnNaN()]
+    monitor = 'loss' if validation_data is None else 'val_loss'
+    if stop is not None:
+        callbacks += [
+            tfk.callbacks.EarlyStopping(
+                monitor=monitor, min_delta=0, patience=int(stop),
+                verbose=verbose, mode='min', baseline=None,
+                restore_best_weights=True,
+                ),
+            ]
+    if name is not None:
+        if os.path.exists(name+'.h5') or os.path.exists(name+'.csv'):
+            name += str(datetime.now()).replace(' ', '_')
+        callbacks += [
+            tfk.callbacks.ModelCheckpoint(
+                filepath=name+'.h5', monitor=monitor, verbose=verbose,
+                save_best_only=True, save_weights_only=True, mode='min',
+                save_freq='epoch',
+                ),
+            tfk.callbacks.CSVLogger(
+                filename=name+'.csv', seperator=',', append=False,
+                ),
+            ]
+    
+    model.compile(optimizer=optimizer, loss=loss)
+    
+    return model.fit(
+        x=x, y=y, batch_size=batch_size, epochs=epochs, verbose=verbose,
+        callbacks=callbacks, validation_data=validation_data, shuffle=True,
+        )
+
+
+class Model(tfk.Model):
+    
+    def __init__(self, model_file=None, x_transform=None, y_transform=None):
+        
+        self._model = self._make_model()
+        if model_file is not None:
+            self._model.load_weights(model_file)
+            
+        if x_transform is None:
+            x_transform = lambda x: x
+        if y_transform is None:
+            y_transform = lambda y: y
+        self._x_transform = x_transform
+        self._y_transform = y_transform
+        
+    def __call__(self, x):
+        
+        return self.predict(x)
+    
+    def predict(self, x):
+        
+        return self._y_transform(
+            self._model.predict_on_batch(self._x_transform(x)),
+            )
+        
+    def _make_model(self):
+        
+        pass
 
 
 class AutoregressiveFlow(Model):
@@ -222,5 +317,6 @@ def _recurrsive_kwargs(bijector, name_to_kwargs):
         for name_regex, kwargs in name_to_kwargs.items():
             if re.match(name_regex, bijector.name):
                 return kwargs
-    return {}
+    return {}    
 
+    
