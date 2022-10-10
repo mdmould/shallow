@@ -1,4 +1,4 @@
 # shallow
 
-A collection of `shallow` wrappers around pytorch and tensorflow functionality.
+A collection of `shallow` wrappers around deep learning functionality from `pytorch` and `tensorflow`.
 
