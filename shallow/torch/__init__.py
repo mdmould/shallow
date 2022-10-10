@@ -260,13 +260,7 @@ def MAF(BaseFlow):
     
 class NSF(BaseFlow):                     
 
-    def _get_transform(
-        self,
-        bins=1,
-        tails='linear',
-        bound=3.,
-        mask='mid',
-        ):
+    def _get_transform(self, bins=1, tails='linear', bound=3., mask='mid'):
 
         return PiecewiseRationalQuadraticCouplingTransform(
             mask=self._get_mask(mask),
