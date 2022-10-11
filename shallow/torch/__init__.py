@@ -1,7 +1,5 @@
 import torch
 from nflows.utils import (
-    sum_except_batch,
-    tensor2numpy,
     create_alternating_binary_mask,
     create_mid_split_binary_mask,
     create_random_binary_mask,
@@ -43,7 +41,7 @@ class Affine(torch.nn.Module):
         return inputs * scale + shift
 
 
-class ExpTransform(Transform):
+class Exp(Transform):
     
     def forward(self, inputs, context=None):
         
@@ -63,10 +61,12 @@ class ExpTransform(Transform):
         return outputs, logabsdet
     
 
-# Apply component-wise transforms
+# Apply indpendent feature-wise (i.e., last axis) transforms
+# similar to:
 # https://www.tensorflow.org/probability/api_docs/python/tfp/bijectors/Blockwise
 # https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#CatTransform
-class BlockwiseTransform(Transform):
+# https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#StackTransform
+class FeaturewiseTransform(Transform):
     
     def __init__(self, transforms, axes=None):
         
@@ -75,11 +75,10 @@ class BlockwiseTransform(Transform):
         transforms = list(transforms)
         if axes is None:
             axes = [[_] for _ in range(len(transforms))]
-        assert len(axes) == len(self.transforms)
+        assert len(axes) == len(transforms)
         self._forwards = [transform.forward for transform in transforms]
         self._inverses = [transform.inverse for transform in transforms]
         self.axes = [torch.LongTensor(axis) for axis in axes]
-        self.dim = dim
         
     def forward(self, inputs, context=None):
         
@@ -92,7 +91,7 @@ class BlockwiseTransform(Transform):
     def _map(self, transforms, inputs, context=None):
         
         outputs = torch.zeros_like(inputs)
-        logabsdet = torch.zeros(list(inputs.shape[:-1])+[len(self.transforms)])
+        logabsdet = torch.zeros(list(inputs.shape[:-1])+[len(transforms)])
         for i, (transform, axis) in enumerate(zip(transforms, self.axes)):
             outputs[..., axis], logabsdet[..., i] = transform(
                 torch.index_select(inputs, -1, axis), context=context,
@@ -123,7 +122,7 @@ class BaseFlow(Flow):
         norm_inputs=None, # inputs to compute mean and std from
         norm_conditions=None, # conditions to compute mean and std from
         norm_between=False,
-        emedding=torch.nn.Identity(),
+        embedding=torch.nn.Identity(),
         distribution=None,
         **kwargs,
         ):
@@ -139,12 +138,12 @@ class BaseFlow(Flow):
         transform = []
         
         if bounds is not None:
-            blockwise_transform = self._get_blockwise(bounds)
-            transform.append(blockwise_transform)
+            featurewise_transform = self._get_featurewise(bounds)
+            transform.append(featurewise_transform)
             
         if norm_inputs is not None:
             if bounds is not None:
-                norm_inputs = blockwise_transform.forward(norm_inputs)
+                norm_inputs = featurewise_transform.forward(norm_inputs)
             transform.append(self._get_norm(norm_inputs))
         
         embedding = self._get_embedding(norm_conditions, embedding)
@@ -164,84 +163,84 @@ class BaseFlow(Flow):
                              
         transform = CompositeTransform(transform)
         
-        if distriubtion is None:
+        if distribution is None:
             distribution = StandardNormal((inputs,))
         
         super().__init__(transform, distribution, embedding_net=embedding)
         
-        def _get_transform(self, **kwargs):
-            
-            return None
-                             
-        def _get_blockwise(self, bounds):
-            
-            transform = []
-            axes = None
-            for bound in bounds:
-                if (bound is None) or all(b is None for b in bound):
-                    transform.append(IdentityTransform())
-                elif any(b is None for b in bound):
-                    if b[0] is None:
-                        shift = b[1]
-                        scale = -1.
-                    elif b[1] is None:
-                        shift = b[1]
-                        scale = 1.
-                    transform.append(CompositeTransform([
-                        InverseTransform(AffineTransform(shift, scale)),
-                        InverseTransform(ExpTransform()),
-                        ]))
-                else:
-                    shift = min(bound)
-                    scale = max(bound) - min(bound)
-                    transform.append(CompositeTransform([
-                        InverseTransform(AffineTransform(shift, scale)),
-                        InverseTransform(Sigmoid()),
-                        ]))
-            
-            return BlockwiseTransform(transform, axes=axes)
-        
-        def _get_norm(self, norm_inputs):
-        
-            mean = torch.mean(norm_inputs, dim=0)
-            std = torch.std(norm_inputs, dim=0)
+    def _get_transform(self, **kwargs):
+
+        return None
+
+    def _get_featurewise(self, bounds):
+
+        transform = []
+        axes = None
+        for bound in bounds:
+            if (bound is None) or all(b is None for b in bound):
+                transform.append(IdentityTransform())
+            elif any(b is None for b in bound):
+                if b[0] is None:
+                    shift = b[1]
+                    scale = -1.
+                elif b[1] is None:
+                    shift = b[1]
+                    scale = 1.
+                transform.append(CompositeTransform([
+                    InverseTransform(AffineTransform(shift, scale)),
+                    InverseTransform(Exp()),
+                    ]))
+            else:
+                shift = min(bound)
+                scale = max(bound) - min(bound)
+                transform.append(CompositeTransform([
+                    InverseTransform(AffineTransform(shift, scale)),
+                    InverseTransform(Sigmoid()),
+                    ]))
+
+        return FeaturewiseTransform(transform, axes=axes)
+
+    def _get_norm(self, norm_inputs):
+
+        mean = torch.mean(norm_inputs, dim=0)
+        std = torch.std(norm_inputs, dim=0)
+        shift = -mean / std
+        scale = 1. / std
+
+        return AffineTransform(shift, scale)
+
+    def _get_embedding(self, norm_conditions, embedding):
+
+        if norm_conditions is not None:
+            mean = torch.mean(norm_conditions, dim=0)
+            std = torch.std(norm_conditions, dim=0)
             shift = -mean / std
             scale = 1. / std
+            embedding = nn.Sequntial(Affine(shift, scale), embedding)
 
-            return AffineTransform(shift, scale)
-                             
-        def _get_embedding(self, norm_conditions, embedding):
-            
-            if norm_conditions is not None:
-                mean = torch.mean(norm_conditions, dim=0)
-                std = torch.std(norm_conditions, dim=0)
-                shift = -mean / std
-                scale = 1. / std
-                embedding = nn.Sequntial(Affine(shift, scale), embedding)
-                
-            return embedding
-            
-        def _get_permutation(self, inputs, permutation):
-            
-            if permuation == 'random':
-                return RandomPermutation(inputs)
-            elif permutation == 'reverse':
-                return ReversePermutation(inputs)
-            else:
-                return Permutation(permutation)
-            
-        def _get_linear(self, inputs, linear):
-            
-            if linear == 'lu':
-                return LULinear(inputs, using_cache=False, identity_init=True)
-            elif linear == 'svd':
-                return SVDLinear(
-                    inputs, num_householder=10, using_cache=False,
-                    identity_init=True,
-                    )
+        return embedding
+
+    def _get_permutation(self, inputs, permutation):
+
+        if permutation == 'random':
+            return RandomPermutation(inputs)
+        elif permutation == 'reverse':
+            return ReversePermutation(inputs)
+        else:
+            return Permutation(permutation)
+
+    def _get_linear(self, inputs, linear):
+
+        if linear == 'lu':
+            return LULinear(inputs, using_cache=False, identity_init=True)
+        elif linear == 'svd':
+            return SVDLinear(
+                inputs, num_householder=10, using_cache=False,
+                identity_init=True,
+                )
             
             
-def MAF(BaseFlow):
+class MAF(BaseFlow):
     
     def _get_transform(self, residual=True):
         
