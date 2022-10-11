@@ -13,7 +13,7 @@ from nflows.transforms import (
     CompositeTransform,
     InverseTransform,
     IdentityTransform,
-    AffineTransform,
+    # AffineTransform,
     Sigmoid,
     BatchNorm,
     Permutation,
@@ -41,14 +41,42 @@ class Affine(torch.nn.Module):
         return inputs * self.scale + self.shift
     
     
+class AffineTransform(Transform):
+    
+    def __init__(self, shift, scale):
+        
+        super().__init__()
+        
+        shift, scale = map(torch.as_tensor, (shift, scale))
+        if (scale == 0.0).any():
+            raise ValueError('Scale must be non-zero.')
+        
+        self.shift = shift
+        self.scale = scale
+        self.logabsdet = torch.sum(torch.log(torch.abs(self.scale)), dim=-1)
+        
+    def forward(self, inputs, context=None):
+        
+        outputs = inputs * self.scale + self.shift
+        
+        return outputs, self.logabsdet
+    
+    def inverse(self, inputs, context=None):
+        
+        outputs = (inputs - self.shift) / self.scale
+        
+        return outputs, -self.logabsdet
+    
+    
 class StandardNorm(AffineTransform):
-
+    
     def __init__(self, inputs):
         
-        mean = torch.mean(inputs, dim=0)
-        std = torch.std(inputs, dim=0)
+        inputs = torch.as_tensor(inputs)
+        mean = inputs.mean(dim=0)
+        std = inputs.std(dim=0)
         shift = -mean / std
-        scale = 1. / std
+        scale = 1 / std
         
         super().__init__(shift, scale)
 
@@ -58,7 +86,7 @@ class Exp(Transform):
     def forward(self, inputs, context=None):
         
         outputs = torch.exp(inputs)
-        logabsdet = torch.log(torch.sum(outputs, dim=-1))
+        logabsdet = torch.sum(inputs, dim=-1)
         
         return outputs, logabsdet
     
@@ -71,7 +99,7 @@ class Exp(Transform):
         logabsdet = -torch.sum(outputs, dim=-1)
         
         return outputs, logabsdet
-    
+
 
 # Apply indpendent feature-wise (i.e., last axis) transforms
 # similar to:
@@ -123,17 +151,17 @@ class BaseFlow(Flow):
         inputs=1,
         conditions=None,
         bounds=None, # None or list of two-item lists
+        norm_inputs=None, # inputs to compute mean and std from
+        norm_conditions=None, # conditions to compute mean and std from
+        transforms=1,
         hidden=1,
         blocks=1, # number of blocks in resnet or layers in mlp
         activation=torch.relu,
         dropout=0.,
         norm_within=False,
-        transforms=1,
+        norm_between=False,
         permutation='reverse', # 'reverse', 'random', or list/tuple
         linear=None, # None, 'lu', 'svd'
-        norm_inputs=None, # inputs to compute mean and std from
-        norm_conditions=None, # conditions to compute mean and std from
-        norm_between=False,
         embedding=torch.nn.Identity(),
         distribution=None,
         **kwargs,
@@ -155,7 +183,7 @@ class BaseFlow(Flow):
             
         if norm_inputs is not None:
             if bounds is not None:
-                norm_inputs = featurewise_transform.forward(norm_inputs)
+                norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             transform.append(self._get_norm(norm_inputs))
         
         embedding = self._get_embedding(norm_conditions, embedding)
@@ -192,11 +220,11 @@ class BaseFlow(Flow):
             if (bound is None) or all(b is None for b in bound):
                 transform.append(IdentityTransform())
             elif any(b is None for b in bound):
-                if b[0] is None:
-                    shift = b[1]
+                if bound[0] is None:
+                    shift = bound[1]
                     scale = -1.
-                elif b[1] is None:
-                    shift = b[1]
+                elif bound[1] is None:
+                    shift = bound[0]
                     scale = 1.
                 transform.append(CompositeTransform([
                     InverseTransform(AffineTransform(shift, scale)),
