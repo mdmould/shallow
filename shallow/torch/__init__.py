@@ -38,7 +38,19 @@ class Affine(torch.nn.Module):
         
     def forward(self, inputs):
         
-        return inputs * scale + shift
+        return inputs * self.scale + self.shift
+    
+    
+class StandardNorm(AffineTransform):
+
+    def __init__(self, inputs):
+        
+        mean = torch.mean(inputs, dim=0)
+        std = torch.std(inputs, dim=0)
+        shift = -mean / std
+        scale = 1. / std
+        
+        super().__init__(shift, scale)
 
 
 class Exp(Transform):
@@ -216,7 +228,7 @@ class BaseFlow(Flow):
             std = torch.std(norm_conditions, dim=0)
             shift = -mean / std
             scale = 1. / std
-            embedding = nn.Sequntial(Affine(shift, scale), embedding)
+            embedding = torch.nn.Sequential(Affine(shift, scale), embedding)
 
         return embedding
 
@@ -235,7 +247,9 @@ class BaseFlow(Flow):
             return LULinear(inputs, using_cache=False, identity_init=True)
         elif linear == 'svd':
             return SVDLinear(
-                inputs, num_householder=10, using_cache=False,
+                inputs,
+                num_householder=10,
+                using_cache=False,
                 identity_init=True,
                 )
             
@@ -259,7 +273,7 @@ class MAF(BaseFlow):
     
 class NSF(BaseFlow):                     
 
-    def _get_transform(self, bins=1, tails='linear', bound=3., mask='mid'):
+    def _get_transform(self, mask='mid', bins=1, tails='linear', bound=3.):
 
         return PiecewiseRationalQuadraticCouplingTransform(
             mask=self._get_mask(mask),
@@ -284,11 +298,11 @@ class NSF(BaseFlow):
 
         return lambda ins, outs: ResidualNet(
             ins,
-            out,
+            outs,
             hidden_features=self.hidden,
             context_features=self.conditions,
             num_blocks=self.blocks,
-            activation=aself.ctivation,
+            activation=self.activation,
             dropout_probability=self.dropout,
             use_batch_norm=self.norm_within,
             )
