@@ -251,8 +251,8 @@ class BaseFlow(Flow):
 
     def _get_embedding(self, norm_conditions, embedding):
     
-    	if embedding is None:
-    	    embedding = torch.nn.Identity()
+        if embedding is None:
+            embedding = torch.nn.Identity()
 
         if norm_conditions is not None:
             mean = torch.mean(norm_conditions, dim=0)
