@@ -162,7 +162,7 @@ class BaseFlow(Flow):
         norm_between=False,
         permutation='reverse', # 'reverse', 'random', or list/tuple
         linear=None, # None, 'lu', 'svd'
-        embedding=torch.nn.Identity(),
+        embedding=None,
         distribution=None,
         **kwargs,
         ):
@@ -250,6 +250,9 @@ class BaseFlow(Flow):
         return AffineTransform(shift, scale)
 
     def _get_embedding(self, norm_conditions, embedding):
+    
+    	if embedding is None:
+    	    embedding = torch.nn.Identity()
 
         if norm_conditions is not None:
             mean = torch.mean(norm_conditions, dim=0)
