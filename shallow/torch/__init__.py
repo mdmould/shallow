@@ -27,6 +27,17 @@ from nflows.transforms import (
     )
 
 
+def get_shift_scale(inputs):
+
+    inputs = torch.as_tensor(inputs)
+    mean = torch.mean(inputs, dim=0)
+    std = inputs.std(dim=0)
+    shift = -mean / std
+    scale = 1.0 / std
+
+    return shift, scale
+
+
 class Affine(torch.nn.Module):
     
     def __init__(self, shift, scale):
@@ -203,19 +214,19 @@ class BaseFlow(Flow):
                         InverseTransform(Sigmoid()),
                         ]))
                     
-            transform.append(FeaturewiseTransform(unique_transform, axes))
+            transform.append(FeaturewiseTransform(unique_transforms, axes))
             
         if norm_inputs is not None:
             norm_inputs = torch.as_tensor(norm_inputs)
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             transform.append(
-                AffineTransform(*self._get_shift_scale(norm_inputs)),
+                AffineTransform(*get_shift_scale(norm_inputs)),
                 )
             
         if norm_conditions is not None:
             norm_conditions = torch.as_tensor(norm_conditions)
-            norm_embedding = Affine(*self._get_shift_scale(norm_conditions))
+            norm_embedding = Affine(*get_shift_scale(norm_conditions))
             if embedding is None:
                 embedding = norm_embedding
             else:
@@ -252,16 +263,6 @@ class BaseFlow(Flow):
     def _get_transform(self, **kwargs):
 
         return None
-    
-    def _get_shift_scale(self, inputs):
-        
-        inputs = torch.tensor(inputs, dtype=torch.float32)
-        mean = torch.mean(inputs, dim=0)
-        std = inputs.std(dim=0)
-        shift = -mean / std
-        scale = 1.0 / std
-        
-        return shift, scale
             
             
 class MAF(BaseFlow):
@@ -286,34 +287,23 @@ class NSF(BaseFlow):
     def _get_transform(self, mask='mid', bins=1, tails='linear', bound=3.):
 
         return PiecewiseRationalQuadraticCouplingTransform(
-            mask=self._get_mask(mask),
-            transform_net_create_fn=self._get_net(),
+            mask=dict(
+                alternating=create_alternating_binary_mask(self.inputs),
+                mid=reate_mid_split_binary_mask(self.inputs),
+                random=create_random_binary_mask(self.inputs),
+                )[mask] if type(mask) is str else mask,
+            transform_net_create_fn=lambda inputs, outputs: ResidualNet(
+                inputs,
+                outputs,
+                hidden_features=self.hidden,
+                context_features=self.conditions,
+                num_blocks=self.blocks,
+                activation=self.activation,
+                dropout_probability=self.dropout,
+                use_batch_norm=self.norm_within,
+                ),
             num_bins=bins,
             tails=tails,
             tail_bound=bound,
-            )
-
-    def _get_mask(self, mask):
-
-        if mask == 'alternating':
-            return create_alternating_binary_mask(self.inputs, even=True)
-        elif mask == 'mid':
-            return create_mid_split_binary_mask(self.inputs)
-        elif mask == 'random':
-            return create_random_binary_mask(self.inputs)
-        else:
-            return mask
-
-    def _get_net(self):
-
-        return lambda ins, outs: ResidualNet(
-            ins,
-            outs,
-            hidden_features=self.hidden,
-            context_features=self.conditions,
-            num_blocks=self.blocks,
-            activation=self.activation,
-            dropout_probability=self.dropout,
-            use_batch_norm=self.norm_within,
             )
 
