@@ -189,7 +189,7 @@ class BaseFlow(Flow):
                 
                 axis = []
                 for i in range(inputs):
-                    if bound == bound[i]:
+                    if bound == bounds[i]:
                         axis.append(i)
                 axes.append(axis)
                 
@@ -214,7 +214,10 @@ class BaseFlow(Flow):
                         InverseTransform(Sigmoid()),
                         ]))
                     
-            transform.append(FeaturewiseTransform(unique_transforms, axes))
+            featurewise_transform = FeaturewiseTransform(
+                unique_transforms, axes,
+                )
+            transform.append(featurewise_transform)
             
         if norm_inputs is not None:
             norm_inputs = torch.as_tensor(norm_inputs)
@@ -237,7 +240,7 @@ class BaseFlow(Flow):
             if permutation is not None:
                 if permutation == 'random':
                     transform.append(RandomPermutation(inputs))
-                elif permuation == 'reverse':
+                elif permutation == 'reverse':
                     transform.append(ReversePermutation(inputs))
                 else:
                     transform.append(Permutation(permutation))
@@ -289,7 +292,7 @@ class NSF(BaseFlow):
         return PiecewiseRationalQuadraticCouplingTransform(
             mask=dict(
                 alternating=create_alternating_binary_mask(self.inputs),
-                mid=reate_mid_split_binary_mask(self.inputs),
+                mid=create_mid_split_binary_mask(self.inputs),
                 random=create_random_binary_mask(self.inputs),
                 )[mask] if type(mask) is str else mask,
             transform_net_create_fn=lambda inputs, outputs: ResidualNet(
