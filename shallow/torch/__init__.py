@@ -185,7 +185,7 @@ class BaseFlow(Flow):
                     
             axes = []
             unique_transforms = []
-            for i, bound in unique_bounds:
+            for i, bound in enumerate(unique_bounds):
                 
                 axis = []
                 for i in range(inputs):
@@ -193,7 +193,7 @@ class BaseFlow(Flow):
                         axis.append(i)
                 axes.append(axis)
                 
-                if (bound is None) or all(b is None for b in bound):
+                if bound is None:
                     unique_transforms.append(IdentityTransform())
                 elif any(b is None for b in bound):
                     if bound[0] is None:
@@ -208,7 +208,7 @@ class BaseFlow(Flow):
                         ]))
                 else:
                     shift = min(bound)
-                    scale = max(bound)
+                    scale = max(bound) - min(bound)
                     unique_transforms.append(CompositeTransform([
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Sigmoid()),
@@ -219,13 +219,14 @@ class BaseFlow(Flow):
                 )
             transform.append(featurewise_transform)
             
-        if norm_inputs is not None:
+        if norm_inputs is None:
+            norm_transform = AffineTransform(shift=0., scale=1.)
+        else:
             norm_inputs = torch.as_tensor(norm_inputs)
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
-            transform.append(
-                AffineTransform(*get_shift_scale(norm_inputs)),
-                )
+            norm_transform = AffineTransform(*get_shift_scale(norm_inputs))
+        transform.append(norm_transform)
             
         if norm_conditions is not None:
             norm_conditions = torch.as_tensor(norm_conditions)
