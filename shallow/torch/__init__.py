@@ -162,8 +162,11 @@ class BaseFlow(Flow):
         linear=None, # None, 'lu', 'svd'
         embedding=None,
         distribution=None,
+        seed=0,
         **kwargs,
         ):
+        
+        torch.manual_seed(seed)
         
         self.inputs = inputs
         self.conditions = conditions
@@ -288,7 +291,7 @@ class MAF(BaseFlow):
     
 class NSF(BaseFlow):                     
 
-    def _get_transform(self, mask='mid', bins=1, tails='linear', bound=3.):
+    def _get_transform(self, mask='mid', bins=1, tails='linear', bound=5.):
 
         return PiecewiseRationalQuadraticCouplingTransform(
             mask=dict(
