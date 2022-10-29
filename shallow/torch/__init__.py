@@ -29,7 +29,7 @@ from nflows.transforms import (
 
 def get_shift_scale(inputs):
 
-    inputs = torch.as_tensor(inputs)
+    # inputs = torch.as_tensor(inputs)
     mean = torch.mean(inputs, dim=0)
     std = inputs.std(dim=0)
     shift = -mean / std
@@ -221,15 +221,13 @@ class BaseFlow(Flow):
                 unique_transforms, axes,
                 )
             transform.append(featurewise_transform)
-            
-        if norm_inputs is None:
-            norm_transform = AffineTransform(shift=0., scale=1.)
-        else:
+
+        if norm_inputs is not None:
             # norm_inputs = torch.as_tensor(norm_inputs)
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             norm_transform = AffineTransform(*get_shift_scale(norm_inputs))
-        transform.append(norm_transform)
+            transform.append(norm_transform)
             
         if norm_conditions is not None:
             # norm_conditions = torch.as_tensor(norm_conditions)
