@@ -225,14 +225,14 @@ class BaseFlow(Flow):
         if norm_inputs is None:
             norm_transform = AffineTransform(shift=0., scale=1.)
         else:
-            norm_inputs = torch.as_tensor(norm_inputs)
+            # norm_inputs = torch.as_tensor(norm_inputs)
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             norm_transform = AffineTransform(*get_shift_scale(norm_inputs))
         transform.append(norm_transform)
             
         if norm_conditions is not None:
-            norm_conditions = torch.as_tensor(norm_conditions)
+            # norm_conditions = torch.as_tensor(norm_conditions)
             norm_embedding = Affine(*get_shift_scale(norm_conditions))
             if embedding is None:
                 embedding = norm_embedding
