@@ -64,7 +64,7 @@ class AffineTransform(Transform):
         scale = torch.as_tensor(scale, dtype=torch.get_default_dtype())
         if (scale == 0.0).any():
             raise ValueError('Scale must be non-zero.')
-        logabsdet = torch.sum(torch.log(torch.abs(self.scale)), dim=-1)
+        logabsdet = torch.sum(torch.log(torch.abs(scale)), dim=-1)
     
         self.register_buffer('shift', shift)
         self.register_buffer('scale', scale)
