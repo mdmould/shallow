@@ -29,7 +29,7 @@ from nflows.transforms import (
 
 def get_shift_scale(inputs):
 
-    # inputs = torch.as_tensor(inputs)
+    inputs = torch.as_tensor(inputs, dtype=torch.get_default_dtype())
     mean = torch.mean(inputs, dim=0)
     std = inputs.std(dim=0)
     shift = -mean / std
@@ -37,20 +37,22 @@ def get_shift_scale(inputs):
 
     return shift, scale
 
-
-class Affine(torch.nn.Module):
+    
+class AffineModule(torch.nn.Module):
     
     def __init__(self, shift, scale):
         
         super().__init__()
         
-        self.shift = shift
-        self.scale = scale
-        
+        self.register_buffer(
+            'shift', torch.as_tensor(shift, dtype=torch.get_default_dtype()))
+        self.register_buffer(
+            'scale', torch.as_tensor(scale, dtype=torch.get_default_dtype()))
+            
     def forward(self, inputs):
         
         return inputs * self.scale + self.shift
-    
+
     
 class AffineTransform(Transform):
     
@@ -58,25 +60,23 @@ class AffineTransform(Transform):
         
         super().__init__()
         
-        shift, scale = map(torch.as_tensor, (shift, scale))
+        shift = torch.as_tensor(shift, dtype=torch.get_default_dtype())
+        scale = torch.as_tensor(scale, dtype=torch.get_default_dtype())
         if (scale == 0.0).any():
             raise ValueError('Scale must be non-zero.')
-        
-        self.shift = shift
-        self.scale = scale
-        self.logabsdet = torch.sum(torch.log(torch.abs(self.scale)), dim=-1)
-        
+        logabsdet = torch.sum(torch.log(torch.abs(self.scale)), dim=-1)
+    
+        self.register_buffer('shift', shift)
+        self.register_buffer('scale', scale)
+        self.register_buffer('logabsdet', logabsdet)
+            
     def forward(self, inputs, context=None):
         
-        outputs = inputs * self.scale + self.shift
-        
-        return outputs, self.logabsdet
+        return inputs * self.scale + self.shift, self.logabsdet
     
     def inverse(self, inputs, context=None):
         
-        outputs = (inputs - self.shift) / self.scale
-        
-        return outputs, -self.logabsdet
+        return (inputs - self.shift) / self.scale, -self.logabsdet
 
 
 class Exp(Transform):
@@ -162,11 +162,8 @@ class BaseFlow(Flow):
         linear=None, # None, 'lu', 'svd'
         embedding=None,
         distribution=None,
-        seed=0,
         **kwargs,
         ):
-        
-        torch.manual_seed(seed)
         
         self.inputs = inputs
         self.conditions = conditions
@@ -223,15 +220,13 @@ class BaseFlow(Flow):
             transform.append(featurewise_transform)
 
         if norm_inputs is not None:
-            # norm_inputs = torch.as_tensor(norm_inputs)
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             norm_transform = AffineTransform(*get_shift_scale(norm_inputs))
             transform.append(norm_transform)
             
         if norm_conditions is not None:
-            # norm_conditions = torch.as_tensor(norm_conditions)
-            norm_embedding = Affine(*get_shift_scale(norm_conditions))
+            norm_embedding = AffineModule(*get_shift_scale(norm_conditions))
             if embedding is None:
                 embedding = norm_embedding
             else:
