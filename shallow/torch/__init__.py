@@ -120,7 +120,7 @@ class FeaturewiseTransform(Transform):
         for i, t in enumerate(self.transforms):
             o, l = t.forward(inputs.select(self.dim, i), context=context)
             outputs.append(o)
-            logabsdets.append(l)
+            logabsdet.append(l)
         
         outputs = torch.stack(outputs, dim=self.dim)
         logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
