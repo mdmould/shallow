@@ -113,7 +113,7 @@ class FeaturewiseTransform(Transform):
         
     def _map(self, transforms, inputs, context=None):
     
-    	assert inputs.size(self.dim) == len(transforms)
+    	assert inputs.size(self.dim) == len(self.transforms)
     	
     	outputs = torch.zeros_like(inputs)
     	logabsdet = torch.zeros_like(inputs)
