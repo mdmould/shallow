@@ -277,7 +277,7 @@ class BaseFlow(Flow):
                 else:
                     shift = min(bound)
                     scale = max(bound) - min(bound)
-                    transforms.append(CompoiteTransform([
+                    transforms.append(CompositeTransform([
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Sigmoid())]))
             featurewise_transform = FeaturewiseTransform(transforms)
