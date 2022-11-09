@@ -117,7 +117,7 @@ class FeaturewiseTransform(Transform):
     
         outputs = []
         logabsdet = []
-        for i, t in enumerate(self.transform):
+        for i, t in enumerate(self.transforms):
             o, l = t.forward(inputs.select(self.dim, i), context=context)
             outputs.append(o)
             logabsdets.append(l)
