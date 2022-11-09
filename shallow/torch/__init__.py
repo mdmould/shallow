@@ -108,40 +108,31 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        self.register_buffer('transforms', list(transforms))
+        self._forwards = [transform.forward for transform in transforms]
+        self._inverses = [transform.inverse for transform in transforms]
         self.dim = -1
+        
+    def _map(self, transforms, inputs, context=None):
+    
+    	assert inputs.size(self.dim) == len(transforms)
+    	
+    	outputs = torch.zeros_like(inputs)
+    	logabsdet = torch.zeros_like(inputs)
+    	
+    	for i, transform in enumerate(transforms):
+    	    outputs[..., i], logabsdet[..., i] = transform(
+    	        inputs[..., i], context=context)
+    	logabsdet = torch.sum(logabsdet, dim=self.dim)
+    	
+    	return outputs, logabsdet
         
     def forward(self, inputs, context=None):
 
-        assert inputs.size(self.dim) == len(self.transforms)
-    
-        outputs = []
-        logabsdet = []
-        for i, t in enumerate(self.transforms):
-            o, l = t.forward(inputs.select(self.dim, i), context=context)
-            outputs.append(o)
-            logabsdet.append(l)
-        
-        outputs = torch.stack(outputs, dim=self.dim)
-        logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
-        
-        return outputs, logabsdet
+        return self._map(self._forwards, inputs, context=context)
         
     def inverse(self, inputs, context=None):
         
-        assert inputs.size(self.dim) == len(self.transforms)
-    
-        outputs = []
-        logabsdet = []
-        for i, t in enumerate(self.transforms):
-            o, l = t.inverse(inputs.select(self.dim, i), context=context)
-            outputs.append(o)
-            logabsdet.append(l)
-            
-        outputs = torch.stack(outputs, dim=self.dim)
-        logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
-    
-        return outputs, logabsdet
+        return self._map(self._inverses, inputs, context=context)
 
 class FeaturewiseTransform_(Transform):
     
