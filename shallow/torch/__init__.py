@@ -118,9 +118,6 @@ class FeaturewiseTransform(Transform):
     	
     	outputs = torch.zeros_like(inputs)
     	logabsdet = torch.zeros_like(inputs)
-    	for t in self.transforms:
-    	    print(t.device)
-    	
     	for i, transform in enumerate(transforms):
     	    outputs[..., i], logabsdet[..., i] = transform(
     	        inputs[..., i], context=context)
