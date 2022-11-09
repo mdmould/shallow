@@ -44,10 +44,10 @@ class AffineModule(torch.nn.Module):
         
         super().__init__()
         
-        self.register_buffer(
-            'shift', torch.as_tensor(shift, dtype=torch.get_default_dtype()))
-        self.register_buffer(
-            'scale', torch.as_tensor(scale, dtype=torch.get_default_dtype()))
+        shift = torch.as_tensor(shift, dtype=torch.get_default_dtype())
+        scale = torch.as_tensor(scale, dtype=torch.get_default_dtype())    
+        self.register_buffer('shift', shift)
+        self.register_buffer('scale', scale)
             
     def forward(self, inputs):
         
@@ -108,8 +108,7 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        self._forwards = [transform.forward for transform in transforms]
-        self._inverses = [transform.inverse for transform in transforms]
+        self.transforms = torch.nn.ModuleList(transforms)
         self.dim = -1
         
     def _map(self, transforms, inputs, context=None):
@@ -128,11 +127,13 @@ class FeaturewiseTransform(Transform):
         
     def forward(self, inputs, context=None):
 
-        return self._map(self._forwards, inputs, context=context)
+        return self._map(
+            (t.forward for t in self.transforms), inputs, context=context)
         
     def inverse(self, inputs, context=None):
         
-        return self._map(self._inverses, inputs, context=context)
+        return self._map(
+            (t.inverse for t in self.transforms), inputs, context=context)
 
 class FeaturewiseTransform_(Transform):
     
@@ -204,50 +205,6 @@ class BaseFlow(Flow):
         self.norm_within = norm_within
         
         transform = []
-        
-#         if bounds is not None:
-#             assert len(bounds) == inputs
-            
-#             unique_bounds = []
-#             for bound in bounds:
-#                 if bound not in unique_bounds:
-#                     unique_bounds.append(bound)
-                    
-#             axes = []
-#             unique_transforms = []
-#             for i, bound in enumerate(unique_bounds):
-                
-#                 axis = []
-#                 for i in range(inputs):
-#                     if bound == bounds[i]:
-#                         axis.append(i)
-#                 axes.append(axis)
-                
-#                 if bound is None:
-#                     unique_transforms.append(IdentityTransform())
-#                 elif any(b is None for b in bound):
-#                     if bound[0] is None:
-#                         shift = bound[1]
-#                         scale = -1.0
-#                     else:
-#                         shift = bound[0]
-#                         scale = 1.0
-#                     unique_transforms.append(CompositeTransform([
-#                         InverseTransform(AffineTransform(shift, scale)),
-#                         InverseTransform(Exp()),
-#                         ]))
-#                 else:
-#                     shift = min(bound)
-#                     scale = max(bound) - min(bound)
-#                     unique_transforms.append(CompositeTransform([
-#                         InverseTransform(AffineTransform(shift, scale)),
-#                         InverseTransform(Sigmoid()),
-#                         ]))
-                    
-#             featurewise_transform = FeaturewiseTransform(
-#                 unique_transforms, axes,
-#                 )
-#             transform.append(featurewise_transform)
 
         if bounds is not None:
             assert len(bounds) == inputs
