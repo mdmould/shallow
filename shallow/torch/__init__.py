@@ -260,10 +260,10 @@ class BaseFlow(Flow):
 
         if bounds is not None:
             assert len(bounds) == inputs
-            transforms = []
+            featurewise_transform = []
             for bound in bounds:
                 if (bound is None) or all(b is None for b in bound):
-                    transforms.append(IdentityTransform())
+                    featurewise_transform.append(IdentityTransform())
                 elif any(b is None for b in bound):
                     if bound[0] is None:
                         shift = bound[1]
@@ -271,16 +271,16 @@ class BaseFlow(Flow):
                     elif bound[1] is None:
                         shift = bound[0]
                         scale = 1.0
-                    transforms.append(CompositeTransform([
+                    featurewise_transform.append(CompositeTransform([
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Exp())]))
                 else:
                     shift = min(bound)
                     scale = max(bound) - min(bound)
-                    transforms.append(CompositeTransform([
+                    featurewise_transform.append(CompositeTransform([
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Sigmoid())]))
-            featurewise_transform = FeaturewiseTransform(transforms)
+            featurewise_transform = FeaturewiseTransform(featurewise_transform)
             transform.append(featurewise_transform)                    
 
         if norm_inputs is not None:
