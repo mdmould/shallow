@@ -103,6 +103,7 @@ class Exp(Transform):
 # similar to:
 # https://www.tensorflow.org/probability/api_docs/python/tfp/bijectors/Blockwise
 # https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#StackTransform
+# Details based on https://github.com/bayesiains/nflows/blob/master/nflows/transforms/base.py#L32
 class FeaturewiseTransform(Transform):
 
     def __init__(self, transforms):
@@ -117,6 +118,7 @@ class FeaturewiseTransform(Transform):
     	
     	outputs = torch.zeros_like(inputs)
     	logabsdet = torch.zeros_like(inputs)
+    	print(outputs.device)
     	
     	for i, transform in enumerate(transforms):
     	    outputs[..., i], logabsdet[..., i] = transform(
