@@ -102,9 +102,47 @@ class Exp(Transform):
 # Apply indpendent feature-wise (i.e., last axis) transforms
 # similar to:
 # https://www.tensorflow.org/probability/api_docs/python/tfp/bijectors/Blockwise
-# https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#CatTransform
 # https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#StackTransform
 class FeaturewiseTransform(Transform):
+
+    def __init__(self, transforms):
+    
+        super().__init__()
+        self.transforms = list(transforms)
+        self.dim = -1
+        
+    def _slice(self, inputs):
+    
+        return [inputs.select(self.dim, i) for i in range(inputs.size(self.dim))]
+        
+    def forward(self, inputs, context=None):
+    
+        outputs = []
+        logabsdet = []
+        for i, t in zip(self._slice(inputs), self.transforms):
+            o, l = t.forward(i, context=context)
+            outputs.append(o)
+            logabsdets.append(l)
+        
+        outputs = torch.stack(outputs, dim=self.dim)
+        logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
+        return outputs, logabsdet
+        
+    def inverse(self, inputs, context=None):
+    
+        outputs = []
+        logabsdet = []
+        for i, t in zip(self._slice(inputs), self.transforms):
+            o, l = t.inverse(i, context=context)
+            outputs.append(o)
+            logabsdet.append(l)
+            
+        outputs = torch.stack(outputs, dim=self.dim)
+        logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
+    
+        return outputs, logabsdet
+
+class FeaturewiseTransform_(Transform):
     
     def __init__(self, transforms, axes=None):
         
