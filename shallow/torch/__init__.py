@@ -108,7 +108,7 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        self.transforms = list(transforms)
+        self.register_buffer('transforms', list(transforms))
         self.dim = -1
         
     def forward(self, inputs, context=None):
