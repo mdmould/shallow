@@ -111,29 +111,30 @@ class FeaturewiseTransform(Transform):
         self.transforms = list(transforms)
         self.dim = -1
         
-    def _slice(self, inputs):
-    
-        return [inputs.select(self.dim, i) for i in range(inputs.size(self.dim))]
-        
     def forward(self, inputs, context=None):
+
+        assert inputs.size(self.dim) == len(self.transforms)
     
         outputs = []
         logabsdet = []
-        for i, t in zip(self._slice(inputs), self.transforms):
-            o, l = t.forward(i, context=context)
+        for i, t in enumerate(self.transform):
+            o, l = t.forward(inputs.select(self.dim, i), context=context)
             outputs.append(o)
             logabsdets.append(l)
         
         outputs = torch.stack(outputs, dim=self.dim)
         logabsdet = torch.stack(logabsdet, dim=self.dim).sum(dim=self.dim)
+        
         return outputs, logabsdet
         
     def inverse(self, inputs, context=None):
+        
+        assert inputs.size(self.dim) == len(self.transforms)
     
         outputs = []
         logabsdet = []
-        for i, t in zip(self._slice(inputs), self.transforms):
-            o, l = t.inverse(i, context=context)
+        for i, t in enumerate(self.transforms):
+            o, l = t.inverse(inputs.select(self.dim, i), context=context)
             outputs.append(o)
             logabsdet.append(l)
             
@@ -213,49 +214,74 @@ class BaseFlow(Flow):
         
         transform = []
         
+#         if bounds is not None:
+#             assert len(bounds) == inputs
+            
+#             unique_bounds = []
+#             for bound in bounds:
+#                 if bound not in unique_bounds:
+#                     unique_bounds.append(bound)
+                    
+#             axes = []
+#             unique_transforms = []
+#             for i, bound in enumerate(unique_bounds):
+                
+#                 axis = []
+#                 for i in range(inputs):
+#                     if bound == bounds[i]:
+#                         axis.append(i)
+#                 axes.append(axis)
+                
+#                 if bound is None:
+#                     unique_transforms.append(IdentityTransform())
+#                 elif any(b is None for b in bound):
+#                     if bound[0] is None:
+#                         shift = bound[1]
+#                         scale = -1.0
+#                     else:
+#                         shift = bound[0]
+#                         scale = 1.0
+#                     unique_transforms.append(CompositeTransform([
+#                         InverseTransform(AffineTransform(shift, scale)),
+#                         InverseTransform(Exp()),
+#                         ]))
+#                 else:
+#                     shift = min(bound)
+#                     scale = max(bound) - min(bound)
+#                     unique_transforms.append(CompositeTransform([
+#                         InverseTransform(AffineTransform(shift, scale)),
+#                         InverseTransform(Sigmoid()),
+#                         ]))
+                    
+#             featurewise_transform = FeaturewiseTransform(
+#                 unique_transforms, axes,
+#                 )
+#             transform.append(featurewise_transform)
+
         if bounds is not None:
             assert len(bounds) == inputs
-            
-            unique_bounds = []
+            transforms = []
             for bound in bounds:
-                if bound not in unique_bounds:
-                    unique_bounds.append(bound)
-                    
-            axes = []
-            unique_transforms = []
-            for i, bound in enumerate(unique_bounds):
-                
-                axis = []
-                for i in range(inputs):
-                    if bound == bounds[i]:
-                        axis.append(i)
-                axes.append(axis)
-                
-                if bound is None:
-                    unique_transforms.append(IdentityTransform())
+                if (bound is None) or all(b is None for b in bound):
+                    transforms.append(IdentityTransform())
                 elif any(b is None for b in bound):
                     if bound[0] is None:
                         shift = bound[1]
                         scale = -1.0
-                    else:
+                    elif bound[1] is None:
                         shift = bound[0]
                         scale = 1.0
-                    unique_transforms.append(CompositeTransform([
+                    transforms.append(CompositeTransform([
                         InverseTransform(AffineTransform(shift, scale)),
-                        InverseTransform(Exp()),
-                        ]))
+                        InverseTransform(Exp())]))
                 else:
                     shift = min(bound)
                     scale = max(bound) - min(bound)
-                    unique_transforms.append(CompositeTransform([
+                    transforms.append(CompoiteTransform([
                         InverseTransform(AffineTransform(shift, scale)),
-                        InverseTransform(Sigmoid()),
-                        ]))
-                    
-            featurewise_transform = FeaturewiseTransform(
-                unique_transforms, axes,
-                )
-            transform.append(featurewise_transform)
+                        InverseTransform(Sigmoid())]))
+            featurewise_transform = FeaturewiseTransform(transforms)
+            transform.append(featurewise_transform)                    
 
         if norm_inputs is not None:
             if bounds is not None:
