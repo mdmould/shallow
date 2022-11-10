@@ -1,4 +1,4 @@
-nflows
+git+https://github.com/bayesiains/nflows@master
 torch
 tensorflow
 tensorflow-probability
