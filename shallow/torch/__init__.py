@@ -114,16 +114,16 @@ class FeaturewiseTransform(Transform):
         
     def _map(self, transforms, inputs, context=None):
     
-    	assert inputs.size(self.dim) == len(self.transforms)
-    	
-    	outputs = torch.zeros_like(inputs)
-    	logabsdet = torch.zeros_like(inputs)
-    	for i, transform in enumerate(transforms):
-    	    outputs[..., i], logabsdet[..., i] = transform(
-    	        inputs[..., i], context=context)
-    	logabsdet = torch.sum(logabsdet, dim=self.dim)
-    	
-    	return outputs, logabsdet
+        assert inputs.size(self.dim) == len(self.transforms)
+
+        outputs = torch.zeros_like(inputs)
+        logabsdet = torch.zeros_like(inputs)
+        for i, transform in enumerate(transforms):
+            outputs[..., i], logabsdet[..., i] = transform(
+                inputs[..., i], context=context)
+        logabsdet = torch.sum(logabsdet, dim=self.dim)
+
+        return outputs, logabsdet
         
     def forward(self, inputs, context=None):
 
@@ -204,7 +204,7 @@ class BaseFlow(Flow):
         self.dropout = dropout
         self.norm_within = norm_within
         
-        transform = []
+        pre_transform = []
 
         if bounds is not None:
             assert len(bounds) == inputs
@@ -229,48 +229,73 @@ class BaseFlow(Flow):
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Sigmoid())]))
             featurewise_transform = FeaturewiseTransform(featurewise_transform)
-            transform.append(featurewise_transform)                    
+            pre_transform.append(featurewise_transform)                    
 
         if norm_inputs is not None:
+            norm_inputs = torch.as_tensor(norm_inputs)
+            assert norm_inputs.size(-1) == inputs
             if bounds is not None:
                 norm_inputs = featurewise_transform.forward(norm_inputs)[0]
             norm_transform = AffineTransform(*get_shift_scale(norm_inputs))
-            transform.append(norm_transform)
+            pre_transform.append(norm_transform)
             
         if norm_conditions is not None:
+            norm_conditions = torch.as_tensor(norm_conditions)
+            assert norm_conditions.size(-1) == conditions
             norm_embedding = AffineModule(*get_shift_scale(norm_conditions))
             if embedding is None:
                 embedding = norm_embedding
             else:
                 embedding = torch.nn.Sequential(norm_embedding, embedding)
-
+                
+        main_transform = []
+                
         for i in range(transforms):
             
             if permutation is not None:
                 if permutation == 'random':
-                    transform.append(RandomPermutation(inputs))
+                    main_transform.append(RandomPermutation(inputs))
                 elif permutation == 'reverse':
-                    transform.append(ReversePermutation(inputs))
+                    main_transform.append(ReversePermutation(inputs))
                 else:
-                    transform.append(Permutation(permutation))
+                    main_transform.append(Permutation(permutation))
                     
             if linear is not None:
                 if linear == 'lu':
-                    transform.append(LULinear(inputs))
+                    main_transform.append(LULinear(inputs))
                 elif linear == 'svd':
-                    transform.append(SVDLinear(inputs, num_householder=10))
+                    main_transform.append(SVDLinear(inputs, num_householder=10))
 
-            transform.append(self._get_transform(**kwargs))
+            main_transform.append(self._get_transform(**kwargs))
                              
             if norm_between:
-                transform.append(BatchNorm(inputs))
-                             
-        transform = CompositeTransform(transform)
-        
+                main_transform.append(BatchNorm(inputs))
+
+        transform = CompositeTransform(pre_transform+main_transform)
         if distribution is None:
             distribution = StandardNormal((inputs,))
-        
         super().__init__(transform, distribution, embedding_net=embedding)
+        
+        self._pre_transform = CompositeTransform(pre_transform)
+        self._main_transform = CompositeTransform(main_transform)
+            
+    def _log_prob_train(self, inputs, context=None):
+        
+        inputs = torch.as_tensor(inputs)
+        if context is not None:
+            context = torch.as_tensor(context)
+            if inputs.shape[0] != context.shape[0]:
+                raise ValueError(
+                    "Number of input items must be equal to number of context items."
+                    )
+
+        context = self._embedding_net(context)
+        inputs = self._pre_transform(inputs, context=context)[0]
+        noise, logabsdet = self._main_transform(inputs, context=context)
+        log_prob = self._distribution.log_prob(noise)
+        
+        return log_prob + logabsdet
+        
         
     def _get_transform(self, **kwargs):
 
