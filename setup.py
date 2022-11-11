@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 name = 'shallow'
-version = '0.0.9' # current = 0.0.9
+version = '0.0.10' # current = 0.0.9
 
 with open('README.md' ,'r') as f:
     long_description = f.read().strip()

@@ -296,6 +296,9 @@ class BaseFlow(Flow):
         
         return log_prob + logabsdet
         
+    def prob(self, inputs, context=None):
+        
+        return torch.exp(self.log_prob(inputs, context=context))
         
     def _get_transform(self, **kwargs):
 
