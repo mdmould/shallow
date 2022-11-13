@@ -322,7 +322,7 @@ class MAF(BaseFlow):
             )
     
     
-class NSF(BaseFlow):                     
+class CouplingNSF(BaseFlow):                     
 
     def _get_transform(self, mask='mid', bins=1, tails='linear', bound=5.):
 
@@ -345,5 +345,27 @@ class NSF(BaseFlow):
             num_bins=bins,
             tails=tails,
             tail_bound=bound,
+            )
+    
+NSF = CouplingNSF
+
+
+class AutoregressiveNSF(BaseFlow):
+    
+    def _get_transform(self, residual=True, mask=False, bins=1, tails='linear', bound=5.0):
+        
+        return MaskedPiecewiseRationalQuadraticAutoregressiveTransform(
+            self.inputs,
+            self.hidden,
+            context_features=self.conditions,
+            num_bins=bins,
+            tails=tails,
+            tail_bound=bound,
+            num_blocks=self.blocks,
+            use_residual_blocks=residual,
+            random_mask=mask,
+            activation=self.activation,
+            dropout_probability=self.dropout,
+            use_batch_norm=self.norm_within,
             )
 
