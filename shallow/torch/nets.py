@@ -1,7 +1,7 @@
 from torch import nn
 from torch.nn import functional as F
 
-from ,utils import get_tensor, get_activation, shift_scale_Normalize
+from .utils import get_tensor, get_activation, shift_scale_Normalize
 
 
 class AffineFixed(nn.Module):
