@@ -1,29 +1,26 @@
+import numpy as np
+from tqdm import tqdm
+from copy import deepcopy
+import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .utils import get_tensor, get_activation, shift_scale_Normalize
+from .utils import get_activation, get_optimizer, shift_and_scale
 
 
-class AffineFixed(nn.Module):
+class AffineModule(nn.Module):
     
     def __init__(self, shift, scale):
         
         super().__init__()
         
-        self.register_buffer('shift', shift)
-        self.register_buffer('scale', scale)
+        self.register_buffer('shift', torch.as_tensor(shift))
+        self.register_buffer('scale', torch.as_tensor(scale))
         
     def forward(self, inputs):
         
         return inputs * self.scale + self.shift
-    
-    
-class Normalize(AffineFixed):
-    
-    def __init__(self, inputs):
         
-        super().__init__(*shift_scale_Normalize(inputs))        
-
 
 class Sequential(nn.Module):
     
@@ -35,11 +32,11 @@ class Sequential(nn.Module):
         layers=1,
         activation='relu',
         output_activation=None,
-        norm_inputs=None,
         dropout=0.0,
+        norm_inputs=None,
         ):
         
-        super().__init__(self)
+        super().__init__()
         
         activation = get_activation(activation)
         
@@ -64,5 +61,146 @@ class Sequential(nn.Module):
     def forward(self, inputs):
         
         return self.sequential(inputs)
+    
+    
+def train(
+    model,
+    loss,
+    training_data,
+    validation_data=None,
+    optimizer='adam',
+    learning_rate=1e-3,
+    weight_decay=0.0,
+    epochs=1,
+    batch_size=None,
+    shuffle=True,
+    reduce=None,
+    stop=None,
+    verbose=True,
+    save=None,
+    ):
+    
+    if shuffle and shuffle is not True:
+        torch.manual_seed(shuffle)
+        np.random.seed(shuffle)
+        
+    model = model.to(device)
+    
+    x_train, y_train = training_data
+    x_train = torch.as_tensor(x_train, dtype=torch.float32, device=cpu)
+    y_train = torch.as_tensor(y_train, dtype=torch.float32, device=cpu)
+    if x_train.ndim == 1:
+        x_train = x_train[:, None]
+    if y_train.ndim == 1:
+        y_train = y_train[:, None]
+    
+    validate = False
+    if validation_data is not None:
+        validate = True
+        x_valid, y_valid = validation_data
+        x_valid = torch.as_tensor(x_valid, dtype=torch.float32, device=cpu)
+        y_valid = torch.as_tensor(y_valid, dtype=torch.float32, device=cpu)
+        if x_valid.ndim == 1:
+            x_valid = x_valid[:, None]
+        if y_valid.ndim == 1:
+            y_valid = y_valid[:, None]
+            
+        if batch_size is None:
+            x_valid = x_valid[None, :]
+            y_valid = y_valid[None, :]
+        else:
+            x_valid = x_valid.split(batch_size)
+            y_valid = y_valid.split(batch_size)
+            
+    optimizer = get_optimizer(optimizer)(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        )
+    
+    best_epoch = 0
+    best_loss = np.inf
+    losses = {'train': []}
+    if validate:
+        losses['valid'] = []
+    
+    for epoch in range(epochs):
+        print('Epoch', epoch)
+        
+        # Training
+        model = model.train()
+        
+        if shuffle:
+            permute = torch.randperm(x_train.shape[0])
+            x = x_train[permute]
+            y = y_train[permute]
+        if batch_size is None:
+            x = x[None, :]
+            y = y[None, :]
+        else:
+            x = x.split(batch_size)
+            y = y.split(batch_size)
+        
+        n = len(x)
+        loss_train = 0
+        loop = zip(x, y)
+        if verbose:
+            loop = tqdm(loop, total=n)
+        for xx, yy in loop:
+            xx = xx.to(device)
+            yy = yy.to(device)
+            optimizer.zero_grad()
+            loss_step = loss(model(xx), yy)
+            loss_step.backward()
+            optimizer.step()
+            loss_train += loss_step.item()
+        loss_train /= n
+        
+        losses['train'].append(loss_train)
+        loss_track = loss_train
+        
+        # Validation
+        if validate:
+            model = model.eval()
+            with torch.inference_mode():
+                    
+                n = len(x_valid)
+                loss_valid = 0
+                loop = zip(x_valid, y_valid)
+                if verbose:
+                    loop = tqdm(loop, total=n)
+                for x, y in loop:
+                    x = x.to(device)
+                    y = y.to(device)
+                    loss_valid += loss(model(x), y).item()
+                loss_valid /= n
+            
+            losses['valid'].append(loss_valid)
+            loss_track = loss_valid
+            
+        if save:
+            np.save(f'{save}.npy', losses, allow_pickle=True)
+            
+        if loss_track < best_loss:
+            if verbose:
+                print('Loss improved, saving')
+            best_epoch = epoch
+            best_loss = loss_track
+            best_model = deepcopy(model)
+            if save is not None:
+                torch.save(best_model, f'{save}.pt')
+                
+        if reduce is not None:
+            if epoch - best_epoch > reduce:
+                if verbose:
+                    print(f'No improvement for {reduce} epochs, reducing lr')
+                for group in optimizer.param_groups:
+                    group['lr'] /= 2
+                    
+        if stop is not None:
+            if epoch - best_epoch > stop:
+                if verbose:
+                    print(f'No improvement for {stop} epochs, stopping')
+                break
+                
+    return best_model, losses
 
     
