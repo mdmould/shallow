@@ -62,7 +62,7 @@ class Sequential(nn.Module):
         return self.sequential(inputs)
     
     
-def train(
+def trainer(
     model,
     training_data,
     validation_data=None,

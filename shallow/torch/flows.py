@@ -286,7 +286,7 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             )
     
     
-def train(
+def trainer(
     model,
     inputs,
     contexts=None,
