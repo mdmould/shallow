@@ -1,3 +1,6 @@
+import numpy as np
+from tqdm import tqdm
+from copy import deepcopy
 import torch
 from torch import nn
 from nflows.utils import(
@@ -26,7 +29,7 @@ from nflows.transforms import(
     MaskedPiecewiseRationalQuadraticAutoregressiveTransform,
     )
 
-from .utils import get_tensor, shift_and_scale
+from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
 from .nets import AffineModule
 
 
@@ -89,7 +92,7 @@ class BaseFlow(Flow):
         transforms=1,
         hidden=1,
         blocks=1,
-        activation=torch.relu,
+        activation='relu',
         dropout=0,
         norm_within=False,
         norm_between=False,
@@ -104,7 +107,7 @@ class BaseFlow(Flow):
         self.contexts = contexts
         self.hidden = hidden
         self.blocks = blocks
-        self.activation = activation
+        self.activation = get_activation(activation, functional=True)
         self.dropout = dropout
         self.norm_within = norm_within
         
@@ -281,4 +284,205 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             dropout_probability=self.dropout,
             use_batch_norm=self.norm_within,
             )
+    
+    
+def train(
+    model,
+    inputs,
+    contexts=None,
+    inputs_valid=None,
+    contexts_valid=None,
+    loss=None,
+    optimizer='adam',
+    learning_rate=1e-3,
+    weight_decay=0,
+    epochs=1,
+    batch_size=None,
+    shuffle=True,
+    reduce=False,
+    stop=False,
+    verbose=True,
+    save=False,
+    ):
+    
+    if shuffle and shuffle is not True:
+        torch.manual_seed(shuffle)
+        np.random.seed
+        
+    model.to(device)
+    
+    if loss is None:
+        loss = lambda i, c: -model.log_prob(i, context=c).mean()
+    
+    inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
+    if inputs.ndim == 1:
+        inputs = inputs[..., None]
+    if not shuffle:
+        if batch_size is None:
+            inputs = inputs[None, ...]
+        else:
+            inputs = inputs.split(batch_size)
+        
+    conditional = False
+    if contexts is not None:
+        conditional = True
+        contexts = torch.as_tensor(contexts, dtype=torch.float32, device=cpu)
+        if contexts.ndim == 1:
+            contexts = contexts[..., None]
+        assert contexts.shape[0] == inputs.shape[0]
+        if not shuffle:
+            if batch_size is None:
+                contexts = contexts[None, ...]
+            else:
+                contexts = contexts.split(batch_size)
+        
+    validate = False
+    if inputs_valid is not None:
+        validate = True
+        
+        inputs_valid = torch.as_tensor(
+            inputs_valid, dtype=torch.float32, device=cpu,
+            )
+        if inputs_valid.ndim == 1:
+            inputs_valid = inputs_valid[..., None]
+        assert inputs_valid.shape[-1] == inputs.shape[-1]
+        if batch_size is None:
+            inputs_valid = inputs_valid[None, ...]
+        else:
+            inputs_valid = inputs_valid.split(batch_size)
+        
+        if conditional:
+            assert contexts_valid is not None
+            contexts_valid = torch.as_tensor(
+                contexts_valid, dtype=torch.float32, device=cpu,
+                )
+            if contexts_valid.ndim == 1:
+                contexts_valid = contexts_valid[..., None]
+            assert contexts_valid.shape[-1] == contexts.shape[-1]
+            assert contexts_valid.shape[0] == inputs_valid.shape[0]
+            
+            if batch_size is None:
+                contexts_valid = contexts_valid[None, ...]
+            else:
+                contexts_valid = contexts_valid.split(batch_size)
+    
+    optimizer = get_optimizer(optimizer)(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        )
+    
+    best_epoch = 0
+    best_loss = np.inf
+    losses = {'train': []}
+    if validate:
+        losses['valid'] = []
+        
+    for epoch in range(1, epochs + 1):
+        print(f'Epoch {epoch}')
+        
+        # Training
+        model = model.train()
+        
+        if shuffle:
+            permute = torch.randperm(inputs.shape[0])
+            inputs_train = inputs[permute]
+            if batch_size is None:
+                inputs_train = inputs_train[None, ...]
+            else:
+                inputs_train = inputs_train.split(batch_size)
+            if conditional:
+                contexts_train = contexts[permute]
+                if batch_size is None:
+                    contexts_train = contexts_train[None, ...]
+                else:
+                    contexts_train = contexts_train.split(batch_size)
+        
+        n = len(inputs_train)
+        loss_train = 0
+        
+        if conditional:
+            loop = zip(inputs_train, contexts_train)
+        else:
+            loop = inputs_train
+        if verbose:
+            loop = tqdm(loop, total=n)
+
+        for batch in loop:
+            optimizer.zero_grad()
+            if conditional:
+                i, c = batch
+                i = i.to(device)
+                c = c.to(device)
+                loss_step = loss(i, c)
+            else:
+                i = batch.to(device)
+                loss_step = loss(i, None)
+            loss_step.backward()
+            optimizer.step()
+            loss_train += loss_step.item()
+        loss_train /= n
+        
+        losses['train'].append(loss_train)
+        loss_track = loss_train
+        
+        # Validation
+        if validate:
+            model = model.eval()
+            with torch.inference_mode():
+                
+                n = len(inputs_valid)
+                loss_valid = 0
+            
+                if conditional:
+                    loop = zip(inputs_valid, contexts_valid)
+                else:
+                    loop = inputs_valid
+                if verbose:
+                    loop = tqdm(loop, total=n)
+                
+                for batch in loop:
+                    if conditional:
+                        i, c = batch
+                        i = i.to(device)
+                        c = c.to(device)
+                        loss_step = loss(i, c)
+                    else:
+                        i = batch.to(device)
+                        loss_step = loss(i, None)
+                    loss_valid += loss_step.item()
+                loss_valid /= n
+                
+            losses['valid'].append(loss_valid)
+            loss_track = loss_valid
+            
+        if verbose:
+            print(loss_train, end='')
+            if validate:
+                print(f', {loss_valid}')
+            
+        if save:
+            np.save(f'{save}.npy', losses, allow_pickle=True)
+            
+        if loss_track < best_loss:
+            if verbose:
+                print('Loss improved, saving')
+            best_epoch = epoch
+            best_loss = loss_track
+            best_model = deepcopy(model)
+            if save:
+                torch.save(best_model, f'{save}.pt')
+                
+        if reduce:
+            if epoch - best_epoch > reduce:
+                if verbose:
+                    print(f'No improvement for {reduce} epochs, reducing lr')
+                for group in optimizer.param_groups:
+                    group['lr'] /= 2
+                    
+        if stop:
+            if epoch - best_epoch > stop:
+                if verbose:
+                    print(f'No improvement for {stop} epochs, stopping')
+                break
+                
+    return best_model, losses
 

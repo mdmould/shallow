@@ -32,9 +32,13 @@ def get_func(func, lib):
 
 def get_activation(activation, functional=False):
         
-    lib = 'torch.nn.functional' if functional else 'torch.nn'
+    if functional:
+        try:
+            return get_func(activation, 'torch')
+        except:
+            return get_func(activation, 'torch.nn.functional')
     
-    return get_func(activation, lib)
+    return get_func(activation, 'torch.nn')
 
 
 def get_optimizer(optimizer):
