@@ -1,9 +1,22 @@
 import numpy as np
 
 
-def cartesian_product(axes):
+def timer(func, *args, **kwargs):
+    
+    t0 = time.time()
+    result = func(*args, **kwargs)
+    print(time.time() - t0)
+    
+    return result
 
-    return np.array(np.meshgrid(*axes, indexing='ij')).reshape(len(axes), -1)
+
+def seeder(seed, func, *args, **kwargs):
+    
+    np.random.seed(seed)
+    result = func(*args, **kwargs)
+    np.random.seed()
+    
+    return result
 
 
 def training_split(n, f_train, f_valid=None, seed=None):
@@ -18,9 +31,7 @@ def training_split(n, f_train, f_valid=None, seed=None):
     n_valid = int(n * f_valid)
     
     idxs = np.arange(n)
-    np.random.seed(n)
-    np.random.shuffle(idxs)
-    np.random.seed()
+    seeder(seed, np.random.shuffle, idxs)
     
     train = np.sort(idxs[:n_train])
     valid = np.sort(idxs[n_train:n_train+n_valid])

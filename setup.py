@@ -18,8 +18,8 @@ setup(
     license='MIT',
     packages=find_packages(),
     install_requires=[
-	'torch',
-	#'nflows',
+        'torch',
+        #'nflows',
         #'tensorflow',
         #'tensorflow-probability',
         ],

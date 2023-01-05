@@ -311,48 +311,43 @@ def trainer(
         
     model.to(device)
     
-    if loss is None:
+    if not loss:
         loss = lambda i, c: -model.log_prob(i, context=c).mean()
     
     inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
     if inputs.ndim == 1:
         inputs = inputs[..., None]
     if not shuffle:
-        if batch_size is None:
-            inputs = inputs[None, ...]
-        else:
+        if batch_size:
             inputs = inputs.split(batch_size)
+        else:
+            inputs = inputs[None, ...]
         
-    conditional = False
-    if contexts is not None:
-        conditional = True
+    if contexts:
         contexts = torch.as_tensor(contexts, dtype=torch.float32, device=cpu)
         if contexts.ndim == 1:
             contexts = contexts[..., None]
         assert contexts.shape[0] == inputs.shape[0]
         if not shuffle:
-            if batch_size is None:
-                contexts = contexts[None, ...]
-            else:
+            if batch_size:
                 contexts = contexts.split(batch_size)
+            else:
+                contexts = contexts[None, ...]
         
-    validate = False
-    if inputs_valid is not None:
-        validate = True
-        
+    if inputs_valid:
         inputs_valid = torch.as_tensor(
             inputs_valid, dtype=torch.float32, device=cpu,
             )
         if inputs_valid.ndim == 1:
             inputs_valid = inputs_valid[..., None]
         assert inputs_valid.shape[-1] == inputs.shape[-1]
-        if batch_size is None:
-            inputs_valid = inputs_valid[None, ...]
-        else:
+        if batch_size:
             inputs_valid = inputs_valid.split(batch_size)
+        else:
+            inputs_valid = inputs_valid[None, ...]
         
-        if conditional:
-            assert contexts_valid is not None
+        if contexts:
+            assert contexts_valid
             contexts_valid = torch.as_tensor(
                 contexts_valid, dtype=torch.float32, device=cpu,
                 )
@@ -362,9 +357,9 @@ def trainer(
             assert contexts_valid.shape[0] == inputs_valid.shape[0]
             
             if batch_size is None:
-                contexts_valid = contexts_valid[None, ...]
-            else:
                 contexts_valid = contexts_valid.split(batch_size)
+            else:
+                contexts_valid = contexts_valid[None, ...]
     
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
@@ -386,20 +381,20 @@ def trainer(
             permute = torch.randperm(inputs.shape[0])
             inputs_train = inputs[permute]
             if batch_size is None:
-                inputs_train = inputs_train[None, ...]
-            else:
                 inputs_train = inputs_train.split(batch_size)
-            if conditional:
+            else:
+                inputs_train = inputs_train[None, ...]
+            if contexts:
                 contexts_train = contexts[permute]
-                if batch_size is None:
-                    contexts_train = contexts_train[None, ...]
-                else:
+                if batch_size:
                     contexts_train = contexts_train.split(batch_size)
+                else:
+                    contexts_train = contexts_train[None, ...]
         
         n = len(inputs_train)
         loss_train = 0
         
-        if conditional:
+        if contexts:
             loop = zip(inputs_train, contexts_train)
         else:
             loop = inputs_train
@@ -408,7 +403,7 @@ def trainer(
 
         for batch in loop:
             optimizer.zero_grad()
-            if conditional:
+            if contexts:
                 i, c = batch
                 i = i.to(device)
                 c = c.to(device)
@@ -425,14 +420,14 @@ def trainer(
         loss_track = loss_train
         
         # Validation
-        if validate:
+        if inputs_valid:
             model = model.eval()
             with torch.inference_mode():
                 
                 n = len(inputs_valid)
                 loss_valid = 0
             
-                if conditional:
+                if contexts:
                     loop = zip(inputs_valid, contexts_valid)
                 else:
                     loop = inputs_valid
