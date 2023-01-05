@@ -41,7 +41,7 @@ class Sequential(nn.Module):
         
         # Input
         modules = [nn.Linear(inputs, hidden), activation()]
-        if norm_inputs:
+        if norm_inputs is not None:
             modules = [AffineModule(*shift_and_scale(norm_inputs))] + modules
         
         # Hidden
@@ -77,11 +77,12 @@ def trainer(
     stop=None,
     verbose=True,
     save=None,
+    seed=None
     ):
     
-    if shuffle and shuffle is not True:
-        torch.manual_seed(shuffle)
-        np.random.seed(shuffle)
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
         
     model = model.to(device)
     
@@ -95,14 +96,16 @@ def trainer(
     assert x_train.shape[0] == y_train.shape[0]
     
     if not shuffle:
-        if batch_size:
-            x_train = x_train.split(batch_size)
-            y_train = y_train.split(batch_size)
-        else:
+        if batch_size is None:
             x_train = x_train[None, ...]
             y_train = y_train[None, ...]
+        else:
+            x_train = x_train.split(batch_size)
+            y_train = y_train.split(batch_size)
     
-    if validation_data:
+    validate = False
+    if validation_data is not None:
+        validate = True
         x_valid, y_valid = validation_data
         x_valid = torch.as_tensor(x_valid, dtype=torch.float32, device=cpu)
         y_valid = torch.as_tensor(y_valid, dtype=torch.float32, device=cpu)
@@ -114,12 +117,12 @@ def trainer(
         assert y_valid.shape[-1] == y_train.shape[-1]
         assert x_valid.shape[0] == y_valid.shape[0]
             
-        if batch_size:
-            x_valid = x_valid.split(batch_size)
-            y_valid = y_valid.split(batch_size)
-        else:
+        if batch_size is None:
             x_valid = x_valid[None, ...]
             y_valid = y_valid[None, ...]
+        else:
+            x_valid = x_valid.split(batch_size)
+            y_valid = y_valid.split(batch_size)
             
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
@@ -141,12 +144,12 @@ def trainer(
             permute = torch.randperm(x_train.shape[0])
             x = x_train[permute]
             y = y_train[permute]
-            if batch_size:
-                x = x.split(batch_size)
-                y = y.split(batch_size)
-            else:
+            if batch_size is None:
                 x = x[None, :]
                 y = y[None, :]
+            else:
+                x = x.split(batch_size)
+                y = y.split(batch_size)
         
         n = len(x)
         loss_train = 0
