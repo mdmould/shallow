@@ -4,7 +4,9 @@ from copy import deepcopy
 import torch
 from torch import nn
 
-from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
+from .utils import (
+    cpu, device, get_activation, get_loss, get_optimizer, shift_and_scale,
+    )
 
 
 class AffineModule(nn.Module):
@@ -123,6 +125,9 @@ def trainer(
         else:
             x_valid = x_valid.split(batch_size)
             y_valid = y_valid.split(batch_size)
+            
+    if type(loss) is str:
+        loss = get_loss(loss)
             
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,

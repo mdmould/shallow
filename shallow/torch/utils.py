@@ -29,14 +29,14 @@ def get_activation(activation, functional=False):
     return get_func(activation, torch.nn)
 
 
-def get_optimizer(optimizer):
-    
-    return get_func(optimizer, torch.optim)
-
-
 def get_loss(loss):
     
     return get_func(loss+'Loss', torch.nn)
+
+
+def get_optimizer(optimizer):
+    
+    return get_func(optimizer, torch.optim)
 
 
 def shift_and_scale(inputs):
