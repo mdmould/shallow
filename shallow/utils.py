@@ -70,6 +70,5 @@ def get_func(func, lib):
     funcs = dir(lib)
     idx = list(map(lambda _: _.lower(), funcs)).index(func.lower())
     
-    # return eval(f'{lib}.{funcs[idx]}')
     return getattr(lib, funcs[idx])
     
