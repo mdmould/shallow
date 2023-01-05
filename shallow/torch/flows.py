@@ -312,9 +312,6 @@ def trainer(
         
     model.to(device)
     
-    if loss is None:
-        loss = lambda i, c: -model.log_prob(i, context=c).mean()
-    
     inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
     if inputs.ndim == 1:
         inputs = inputs[..., None]
@@ -365,6 +362,10 @@ def trainer(
                 contexts_valid = contexts_valid[None, ...]
             else:
                 contexts_valid = contexts_valid.split(batch_size)
+                
+    if loss is None:
+        loss = lambda i, c: -model.log_prob(i, context=c).mean()
+    assert(callable(loss)
     
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,

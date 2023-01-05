@@ -68,7 +68,7 @@ def trainer(
     model,
     training_data,
     validation_data=None,
-    loss=nn.MSELoss(),
+    loss='mse',
     optimizer='adam',
     learning_rate=1e-3,
     weight_decay=0.0,
@@ -128,6 +128,8 @@ def trainer(
             
     if type(loss) is str:
         loss = get_loss(loss)
+    else:
+        assert callable(loss)
             
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
