@@ -127,7 +127,7 @@ def trainer(
             y_valid = y_valid.split(batch_size)
             
     if type(loss) is str:
-        loss = get_loss(loss)
+        loss = get_loss(loss)()
     else:
         assert callable(loss)
             
