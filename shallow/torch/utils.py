@@ -34,6 +34,11 @@ def get_optimizer(optimizer):
     return get_func(optimizer, torch.optim)
 
 
+def get_loss(loss):
+    
+    return get_func(loss+'Loss', torch.nn)
+
+
 def shift_and_scale(inputs):
     
     inputs = torch.as_tensor(inputs)
