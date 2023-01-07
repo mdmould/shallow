@@ -19,6 +19,11 @@ def seeder(seed, func, *args, **kwargs):
     return result
 
 
+def cartesian_product(axes):
+
+    return np.array(np.meshgrid(*axes, indexing='ij')).reshape(len(axes), -1)
+
+
 def training_split(n, f_train, f_valid=None, seed=None):
     
     assert 0 < f_train <= 1
