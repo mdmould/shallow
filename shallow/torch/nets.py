@@ -140,8 +140,10 @@ def trainer(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
+    if reduce:
+        epoch_reduce = 0
     
-    for epoch in range(epochs):
+    for epoch in range(1, epochs+1):
         print('Epoch', epoch)
         
         # Training
@@ -213,7 +215,8 @@ def trainer(
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
-            if epoch - best_epoch > reduce:
+            if epoch - epoch_reduce > reduce:
+                epoch_reduce = epoch
                 if verbose:
                     print(f'No improvement for {reduce} epochs, reducing lr')
                 for group in optimizer.param_groups:

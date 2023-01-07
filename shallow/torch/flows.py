@@ -365,7 +365,7 @@ def trainer(
                 
     if loss is None:
         loss = lambda i, c: -model.log_prob(i, context=c).mean()
-    assert(callable(loss)
+    assert callable(loss)
     
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
@@ -376,6 +376,8 @@ def trainer(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
+    if reduce:
+           epoch_reduce = 0
         
     for epoch in range(1, epochs + 1):
         print(f'Epoch {epoch}')
@@ -473,7 +475,8 @@ def trainer(
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
-            if epoch - best_epoch > reduce:
+            if epoch - epoch_reduce > reduce:
+                epoch_reduce = epoch
                 if verbose:
                     print(f'No improvement for {reduce} epochs, reducing lr')
                 for group in optimizer.param_groups:
