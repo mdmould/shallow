@@ -11,12 +11,10 @@ def timer(func, *args, **kwargs):
 
 
 def seeder(seed, func, *args, **kwargs):
-    
-    state = np.random.get_state()
+
     np.random.seed(seed)
     result = func(*args, **kwargs)
     np.random.seed()
-    np.random.set_state(state)
     
     return result
 
