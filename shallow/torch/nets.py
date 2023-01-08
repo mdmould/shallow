@@ -209,14 +209,14 @@ def trainer(
             if verbose:
                 print('Loss improved, saving')
             best_epoch = epoch
-            if reduce:
-                epoch_reduce = epoch
             best_loss = loss_track
             best_model = deepcopy(model)
             if save:
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
+            if epoch - best_epoch == 0:
+                epoch_reduce = epoch
             if epoch - epoch_reduce > reduce:
                 epoch_reduce = epoch
                 if verbose:
