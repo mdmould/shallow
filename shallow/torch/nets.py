@@ -209,6 +209,7 @@ def trainer(
             if verbose:
                 print('Loss improved, saving')
             best_epoch = epoch
+            epoch_reduce = epoch
             best_loss = loss_track
             best_model = deepcopy(model)
             if save:
