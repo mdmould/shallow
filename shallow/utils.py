@@ -12,9 +12,10 @@ def timer(func, *args, **kwargs):
 
 def seeder(seed, func, *args, **kwargs):
 
+    state = np.random.get_state()
     np.random.seed(seed)
     result = func(*args, **kwargs)
-    np.random.seed()
+    np.random.set_state(state)
     
     return result
 
@@ -36,7 +37,8 @@ def training_split(n, f_train, f_valid=None, seed=None):
     n_valid = int(n * f_valid)
     
     idxs = np.arange(n)
-    seeder(seed, np.random.shuffle, idxs)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(idxs)
     
     train = np.sort(idxs[:n_train])
     valid = np.sort(idxs[n_train:n_train+n_valid])
