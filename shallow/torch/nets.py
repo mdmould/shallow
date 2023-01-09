@@ -44,7 +44,7 @@ class MultilayerPerceptron(nn.Module):
         # Input
         modules = [nn.Linear(inputs, hidden), activation()]
         # Zero mean + unit variance per dimension
-        if norm_inputs:
+        if norm_inputs is not False:
             # Place holder for loading state dict
             if norm_inputs is True:
                 shift, scale = 0.0, 1.0

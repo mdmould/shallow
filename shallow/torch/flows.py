@@ -155,7 +155,7 @@ class BaseFlow(Flow):
             pre_transform.append(featurewise_transform)
             
         # Zero mean + unit variance per parameter dimension
-        if norm_inputs:
+        if norm_inputs is not False:
             # Place holder for loading state dict
             if norm_inputs is True:
                 shift, scale = 0.0, 1.0
@@ -171,7 +171,7 @@ class BaseFlow(Flow):
             pre_transform.append(norm_transform)
             
         # Zero mean + unit variance per context dimension
-        if norm_contexts:
+        if norm_contexts is not False:
             # Place holder for loading state dict
             if norm_contexts is True:
                 shift, scale = 0.0, 1.0
