@@ -23,18 +23,18 @@ class AffineModule(nn.Module):
         return inputs * self.scale + self.shift
         
 
-class Sequential(nn.Module):
+class MultilayerPerceptron(nn.Module):
     
     def __init__(
         self,
-        inputs=1,
-        outputs=1,
-        hidden=1,
-        layers=1,
-        activation='relu',
-        output_activation=None,
-        dropout=0.0,
-        norm_inputs=None,
+        inputs=1, # Number of input dimensions
+        outputs=1, # Number of output dimensions
+        hidden=1, # Number of units in each hidden layer
+        layers=1, # Number of hidden layers
+        activation='relu', # Activation function
+        output_activation=None, # None or activation function for outpt layer
+        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        norm_inputs=False, # Standardize inputs, bool or array/tensor
         ):
         
         super().__init__()
@@ -43,8 +43,15 @@ class Sequential(nn.Module):
         
         # Input
         modules = [nn.Linear(inputs, hidden), activation()]
-        if norm_inputs is not None:
-            modules = [AffineModule(*shift_and_scale(norm_inputs))] + modules
+        # Zero mean + unit variance per dimension
+        if norm_inputs:
+            # Place holder for loading state dict
+            if norm_inputs is True:
+                shift, scale = 0.0, 1.0
+            # Input tensor to compute mean and variance from
+            else:
+                shift, scale = shift_and_scale(norm_inputs)
+            modules = [AffineModule(shift, scale)] + modules
         
         # Hidden
         for i in range(layers):
@@ -57,7 +64,7 @@ class Sequential(nn.Module):
         if output_activation:
             modules += [get_activation(output_activation, functional=False)()]
             
-        self.sequential = nn.Sequential(*modules)
+        self.sequential = nn.Sequential(modules)
         
     def forward(self, inputs):
         

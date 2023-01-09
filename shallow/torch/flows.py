@@ -84,23 +84,23 @@ class BaseFlow(Flow):
     
     def __init__(
         self,
-        inputs=1,
-        contexts=None,
-        bounds=None,
-        norm_inputs=None,
-        norm_contexts=None,
-        transforms=1,
-        hidden=1,
-        blocks=1,
-        activation='relu',
-        dropout=0,
-        norm_within=False,
-        norm_between=False,
-        permutation=None,
-        linear=None,
-        embedding=None,
-        distribution=None,
-        **kwargs,
+        inputs=1, # Number of parameter dimensions
+        contexts=None, # Number of conditional dimensions
+        bounds=None, # Parameter boundaries
+        norm_inputs=False, # Standardize parameters, bool or array/tensor
+        norm_contexts=False, # Standardize contexts, bool or array/tensor
+        transforms=1, # Number of flow layers
+        hidden=1, # Number of hidden units in each block/layer of the net
+        blocks=1, # Number of blocks/layers in the net
+        activation='relu', # Activation function
+        dropout=0, # Dropout probability for hidden units, 0 <= dropout < 1
+        norm_within=False, # Batch normalization within the net
+        norm_between=False, # Batch normalization between flow layers
+        permutation=None, # None, 'random', 'reverse', or list
+        linear=None, # None or 'lu'
+        embedding=None, # Network to embed contexts
+        distribution=None, # None (standard normal) or nflows Distribution
+        **kwargs, # Keyword arguments passed to transform constructor
         ):
         
         self.inputs = inputs
@@ -114,19 +114,25 @@ class BaseFlow(Flow):
         # Fixed pre-transforms for bounded densities and standardization
         pre_transform = []
         
+        # Enforce boundaries
         if bounds is not None:
             assert len(bounds) == inputs
             
+            # Add bijection required for each dimension
             featurewise_transform = []
             for bound in bounds:
                 
+                # Unbounded dimension
                 if (bound is None) or all(b is None for b in bound):
                     featurewise_transform.append(IdentityTransform())
                     
+                # One side unbounded
                 elif any(b is None for b in bound):
+                    # Left unbounded
                     if bound[0] is None:
                         shift = bound[1]
                         scale = -1.0
+                    # Right unbounded
                     elif bound[1] is None:
                         shift = bound[0]
                         scale = 1.0
@@ -134,7 +140,8 @@ class BaseFlow(Flow):
                         InverseTransform(AffineTransform(shift, scale)),
                         InverseTransform(Exp()),
                         ]))
-                    
+                
+                # Bounded
                 else:
                     shift = min(bound)
                     scale = max(bound) - min(bound)
@@ -143,21 +150,38 @@ class BaseFlow(Flow):
                         InverseTransform(Sigmoid()),
                         ]))
                     
+            # Combine per-dimension bijections into one bijection
             featurewise_transform = FeaturewiseTransform(featurewise_transform)
             pre_transform.append(featurewise_transform)
             
-        if norm_inputs is not None:
-            norm_inputs = torch.as_tensor(norm_input)
-            assert norm_inputs.size(-1) == inputs
-            if bounds is not None:
-                norm_inputs = featurewise_transform.forward(norm_inputs)[0]
-            norm_transform = AffineTransform(*shift_and_scale(norm_inputs))
+        # Zero mean + unit variance per parameter dimension
+        if norm_inputs:
+            # Place holder for loading state dict
+            if norm_inputs is True:
+                shift, scale = 0.0, 1.0
+            # Input tensor to compute mean and variance from
+            else:
+                norm_inputs = torch.as_tensor(norm_input)
+                assert norm_inputs.size(-1) == inputs
+                # Rescaling after boundary-enforcing bijection
+                if bounds is not None:
+                    norm_inputs = featurewise_transform.forward(norm_inputs)[0]
+                shift, scale = shift_and_scale(norm_inputs)
+            norm_transform = AffineTransform(shift, scale)
             pre_transform.append(norm_transform)
             
-        if norm_contexts is not None:
-            norm_contexts = torch.as_tensor(norm_contexts)
-            assert norm_contexts.size(-1) == contexts
-            norm_embedding = AffineModule(*shift_and_scale(norm_contexts))
+        # Zero mean + unit variance per context dimension
+        if norm_contexts:
+            # Place holder for loading state dict
+            if norm_contexts is True:
+                shift, scale = 0.0, 1.0
+            # Input tensor to compute mean and variance from
+            else:
+                norm_contexts = torch.as_tensor(norm_contexts)
+                assert norm_contexts.size(-1) == contexts
+                shift, scale = shift_and_scale(norm_contexts)
+            norm_embedding = AffineModule(shift, scale)
+            # Rescaling before context embedding network
             if embedding is None:
                 embedding = norm_embedding
             else:
@@ -168,6 +192,7 @@ class BaseFlow(Flow):
         
         for i in range(transforms):
             
+            # Permute parameter order between flow layers
             if permutation is not None:
                 if permutation == 'random':
                     main_transform.append(RandomPermutation(inputs))
@@ -175,13 +200,16 @@ class BaseFlow(Flow):
                     main_transform.append(ReversePermutation(inputs))
                 else:
                     main_transform.append(Permutation(permutation))
-                    
+            
+            # Linear layer
             if linear is not None:
                 if linear == 'lu':
                     main_transform.append(LULinear(inputs))
                     
+            # Main bijection in this flow layers
             main_transform.append(self._get_transform(**kwargs))
             
+            # Batch normalization at the end of the flow layers
             if norm_between:
                 main_transform.append(BatchNorm(inputs))
                 
