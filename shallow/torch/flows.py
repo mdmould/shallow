@@ -475,6 +475,8 @@ def trainer(
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
+            if epoch - best_epoch == 0:
+                epoch_reduce = epoch
             if epoch - epoch_reduce > reduce:
                 epoch_reduce = epoch
                 if verbose:
