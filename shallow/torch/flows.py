@@ -93,7 +93,7 @@ class BaseFlow(Flow):
         hidden=1, # Number of hidden units in each block/layer of the net
         blocks=1, # Number of blocks/layers in the net
         activation='relu', # Activation function
-        dropout=0, # Dropout probability for hidden units, 0 <= dropout < 1
+        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
         norm_within=False, # Batch normalization within the net
         norm_between=False, # Batch normalization between flow layers
         permutation=None, # None, 'random', 'reverse', or list
@@ -161,7 +161,7 @@ class BaseFlow(Flow):
                 shift, scale = 0.0, 1.0
             # Input tensor to compute mean and variance from
             else:
-                norm_inputs = torch.as_tensor(norm_input)
+                norm_inputs = torch.as_tensor(norm_inputs)
                 assert norm_inputs.size(-1) == inputs
                 # Rescaling after boundary-enforcing bijection
                 if bounds is not None:
@@ -204,7 +204,7 @@ class BaseFlow(Flow):
             # Linear layer
             if linear is not None:
                 if linear == 'lu':
-                    main_transform.append(LULinear(inputs))
+                    main_transform.append(LULinear(inputs, identity_init=True))
                     
             # Main bijection in this flow layers
             main_transform.append(self._get_transform(**kwargs))
@@ -295,7 +295,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
 class AutoregressiveNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
-        self, residual=False, mask=False, bins=5, tails='linear', bound=5.0,
+        self, residual=True, mask=False, bins=5, tails='linear', bound=5.0,
         ):
         
         return MaskedPiecewiseRationalQuadraticAutoregressiveTransform(
@@ -336,60 +336,65 @@ def trainer(
     
     if seed is not None:
         torch.manual_seed(seed)
-        np.random.seed(seed)
         
     model.to(device)
     
     inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
     if inputs.ndim == 1:
         inputs = inputs[..., None]
-    if not shuffle:
-        if batch_size is None:
-            inputs = inputs[None, ...]
-        else:
-            inputs = inputs.split(batch_size)
         
     conditional = False
     if contexts is not None:
         conditional = True
+        
         contexts = torch.as_tensor(contexts, dtype=torch.float32, device=cpu)
         if contexts.ndim == 1:
             contexts = contexts[..., None]
         assert contexts.shape[0] == inputs.shape[0]
-        if not shuffle:
-            if batch_size is None:
-                contexts = contexts[None, ...]
-            else:
-                contexts = contexts.split(batch_size)
         
     validate = False
     if inputs_valid is not None:
         validate = True
+        
         inputs_valid = torch.as_tensor(
             inputs_valid, dtype=torch.float32, device=cpu,
             )
         if inputs_valid.ndim == 1:
             inputs_valid = inputs_valid[..., None]
         assert inputs_valid.shape[-1] == inputs.shape[-1]
+        
         if batch_size is None:
             inputs_valid = inputs_valid[None, ...]
         else:
             inputs_valid = inputs_valid.split(batch_size)
-        
+                
         if conditional:
             assert contexts_valid is not None
+            
             contexts_valid = torch.as_tensor(
                 contexts_valid, dtype=torch.float32, device=cpu,
                 )
             if contexts_valid.ndim == 1:
                 contexts_valid = contexts_valid[..., None]
-            assert contexts_valid.shape[-1] == contexts.shape[-1]
             assert contexts_valid.shape[0] == inputs_valid.shape[0]
+            assert contexts_valid.shape[-1] == contexts.shape[-1]
             
             if batch_size is None:
-                contexts_valid = contexts_valid[None, ...]
+                contexts_valid = contexts_valid.split(batch_size)
             else:
                 contexts_valid = contexts_valid.split(batch_size)
+                
+    if not shuffle:
+        if batch_size is None:
+            inputs = inputs[None, ...]
+        else:
+            inputs = inputs.split(batch_size)
+            
+        if conditional:
+            if batch_size is None:
+                contexts = contexts[None, ...]
+            else:
+                contexts = contexts.split(batch_size)
                 
     if loss is None:
         loss = lambda i, c: -model.log_prob(i, context=c).mean()
@@ -414,44 +419,42 @@ def trainer(
         model = model.train()
         
         if shuffle:
-            permute = torch.randperm(inputs.shape[0])
-            inputs_train = inputs[permute]
+            perm = torch.randperm(inputs.shape[0])
+            
+            inputs_train = inputs[perm]
             if batch_size is None:
                 inputs_train = inputs_train[None, ...]
             else:
                 inputs_train = inputs_train.split(batch_size)
+                
             if conditional:
-                contexts_train = contexts[permute]
+                contexts_train = contexts[perm]
                 if batch_size is None:
                     contexts_train = contexts_train[None, ...]
                 else:
                     contexts_train = contexts_train.split(batch_size)
-        
+            
+        else:
+            inputs_train = inputs
+            if conditional:
+                contexts_train = contexts
+                
         n = len(inputs_train)
-        loss_train = 0
-        
         if conditional:
             loop = zip(inputs_train, contexts_train)
         else:
-            loop = inputs_train
+            loop = zip(inputs_train)
         if verbose:
             loop = tqdm(loop, total=n)
-
+            
+        loss_train = 0
         for batch in loop:
             optimizer.zero_grad()
-            if conditional:
-                i, c = batch
-                i = i.to(device)
-                c = c.to(device)
-                loss_step = loss(i, c)
-            else:
-                i = batch.to(device)
-                loss_step = loss(i, None)
+            loss_step = loss(*map(lambda _: _.to(device), batch))
             loss_step.backward()
             optimizer.step()
             loss_train += loss_step.item()
         loss_train /= n
-        
         losses['train'].append(loss_train)
         loss_track = loss_train
         
@@ -461,29 +464,19 @@ def trainer(
             with torch.inference_mode():
                 
                 n = len(inputs_valid)
-                loss_valid = 0
-            
                 if conditional:
                     loop = zip(inputs_valid, contexts_valid)
                 else:
-                    loop = inputs_valid
+                    loop = zip(inputs_valid)
                 if verbose:
                     loop = tqdm(loop, total=n)
-                
+                    
+                loss_valid = 0
                 for batch in loop:
-                    if conditional:
-                        i, c = batch
-                        i = i.to(device)
-                        c = c.to(device)
-                        loss_step = loss(i, c)
-                    else:
-                        i = batch.to(device)
-                        loss_step = loss(i, None)
-                    loss_valid += loss_step.item()
+                    loss_valid += loss(*map(lambda _: _.to(device), batch)).item()
                 loss_valid /= n
-                
-            losses['valid'].append(loss_valid)
-            loss_track = loss_valid
+                losses['valid'].append(loss_valid)
+                loss_track = loss_valid
             
         if verbose:
             print(loss_train, end='')

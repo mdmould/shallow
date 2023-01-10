@@ -64,7 +64,7 @@ class MultilayerPerceptron(nn.Module):
         if output_activation:
             modules += [get_activation(output_activation, functional=False)()]
             
-        self.sequential = nn.Sequential(modules)
+        self.sequential = nn.Sequential(*modules)
         
     def forward(self, inputs):
         
@@ -82,39 +82,31 @@ def trainer(
     epochs=1,
     batch_size=None,
     shuffle=True,
-    reduce=None,
-    stop=None,
+    reduce=False,
+    stop=False,
     verbose=True,
-    save=None,
+    save=False,
     seed=None
     ):
     
     if seed is not None:
         torch.manual_seed(seed)
-        np.random.seed(seed)
         
     model = model.to(device)
     
-    x_train, y_train = training_data
-    x_train = torch.as_tensor(x_train, dtype=torch.float32, device=cpu)
-    y_train = torch.as_tensor(y_train, dtype=torch.float32, device=cpu)
-    if x_train.ndim == 1:
-        x_train = x_train[..., None]
-    if y_train.ndim == 1:
-        y_train = y_train[..., None]
-    assert x_train.shape[0] == y_train.shape[0]
-    
-    if not shuffle:
-        if batch_size is None:
-            x_train = x_train[None, ...]
-            y_train = y_train[None, ...]
-        else:
-            x_train = x_train.split(batch_size)
-            y_train = y_train.split(batch_size)
+    x, y = training_data
+    x = torch.as_tensor(x, dtype=torch.float32, device=cpu)
+    y = torch.as_tensor(y, dtype=torch.float32, device=cpu)
+    if x.ndim == 1:
+        x = x[..., None]
+    if y.ndim == 1:
+        y = y[..., None]
+    assert x.shape[0] == y.shape[0]
     
     validate = False
     if validation_data is not None:
         validate = True
+        
         x_valid, y_valid = validation_data
         x_valid = torch.as_tensor(x_valid, dtype=torch.float32, device=cpu)
         y_valid = torch.as_tensor(y_valid, dtype=torch.float32, device=cpu)
@@ -122,17 +114,25 @@ def trainer(
             x_valid = x_valid[..., None]
         if y_valid.ndim == 1:
             y_valid = y_valid[..., None]
-        assert x_valid.shape[-1] == x_train.shape[-1]
-        assert y_valid.shape[-1] == y_train.shape[-1]
         assert x_valid.shape[0] == y_valid.shape[0]
-            
+        assert x_valid.shape[-1] == x.shape[-1]
+        assert y_valid.shape[-1] == y.shape[-1]
+        
         if batch_size is None:
             x_valid = x_valid[None, ...]
             y_valid = y_valid[None, ...]
         else:
             x_valid = x_valid.split(batch_size)
             y_valid = y_valid.split(batch_size)
-            
+        
+    if not shuffle:
+        if batch_size is None:
+            x = x[None, ...]
+            y = y[None, ...]
+        else:
+            x = x.split(batch_size)
+            y = y.split(batch_size)
+
     if type(loss) is str:
         loss = get_loss(loss)()
     else:
@@ -157,31 +157,31 @@ def trainer(
         model = model.train()
         
         if shuffle:
-            permute = torch.randperm(x_train.shape[0])
-            x = x_train[permute]
-            y = y_train[permute]
+            perm = torch.randperm(x.shape[0])
+            x_train = x[perm]
+            y_train = y[perm]
             if batch_size is None:
-                x = x[None, :]
-                y = y[None, :]
+                x_train = x_train[None, ...]
+                y_train = y_train[None, ...]
             else:
-                x = x.split(batch_size)
-                y = y.split(batch_size)
-        
-        n = len(x)
-        loss_train = 0
-        loop = zip(x, y)
+                x_train = x_train.split(batch_size)
+                y_train = y_train.split(batch_size)
+        else:
+            x_train, y_train = x, y
+                
+        n = len(x_train)
+        loop = zip(x_train, y_train)
         if verbose:
             loop = tqdm(loop, total=n)
+        
+        loss_train = 0
         for xx, yy in loop:
-            xx = xx.to(device)
-            yy = yy.to(device)
             optimizer.zero_grad()
-            loss_step = loss(model(xx), yy)
+            loss_step = loss(model(xx.to(device)), yy.to(device))
             loss_step.backward()
             optimizer.step()
             loss_train += loss_step.item()
         loss_train /= n
-        
         losses['train'].append(loss_train)
         loss_track = loss_train
         
@@ -189,20 +189,18 @@ def trainer(
         if validate:
             model = model.eval()
             with torch.inference_mode():
-                    
+                
                 n = len(x_valid)
-                loss_valid = 0
                 loop = zip(x_valid, y_valid)
                 if verbose:
                     loop = tqdm(loop, total=n)
-                for x, y in loop:
-                    x = x.to(device)
-                    y = y.to(device)
-                    loss_valid += loss(model(x), y).item()
+                
+                loss_valid = 0
+                for xx, yy in loop:
+                    loss_valid += loss(model(xx.to(device)), yy.to(device)).item()
                 loss_valid /= n
-            
-            losses['valid'].append(loss_valid)
-            loss_track = loss_valid
+                losses['valid'].append(loss_valid)
+                loss_track = loss_valid
             
         if verbose:
             print(loss_train, end='')
@@ -214,11 +212,13 @@ def trainer(
             
         if loss_track < best_loss:
             if verbose:
-                print('Loss improved, saving')
+                print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model)
             if save:
+                if verbose:
+                    print(f'Saving to {save}')
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
