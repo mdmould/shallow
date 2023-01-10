@@ -170,22 +170,25 @@ class BaseFlow(Flow):
             norm_transform = AffineTransform(shift, scale)
             pre_transform.append(norm_transform)
             
-        # Zero mean + unit variance per context dimension
-        if norm_contexts is not False:
-            # Place holder for loading state dict
-            if norm_contexts is True:
-                shift, scale = 0.0, 1.0
-            # Input tensor to compute mean and variance from
-            else:
-                norm_contexts = torch.as_tensor(norm_contexts)
-                assert norm_contexts.size(-1) == contexts
-                shift, scale = shift_and_scale(norm_contexts)
-            norm_embedding = AffineModule(shift, scale)
-            # Rescaling before context embedding network
-            if embedding is None:
-                embedding = norm_embedding
-            else:
-                embedding = nn.Sequential(norm_embedding, embedding)
+        if contexts is not None:
+            # Zero mean + unit variance per context dimension
+            if norm_contexts is not False:
+                # Place holder for loading state dict
+                if norm_contexts is True:
+                    shift, scale = 0.0, 1.0
+                # Input tensor to compute mean and variance from
+                else:
+                    norm_contexts = torch.as_tensor(norm_contexts)
+                    assert norm_contexts.size(-1) == contexts
+                    shift, scale = shift_and_scale(norm_contexts)
+                norm_embedding = AffineModule(shift, scale)
+                # Rescaling before context embedding network
+                if embedding is None:
+                    embedding = norm_embedding
+                else:
+                    embedding = nn.Sequential(norm_embedding, embedding)
+        else:
+            assert norm_contexts is False and embedding is None
                 
         # Main transforms in the flow
         main_transform = []
