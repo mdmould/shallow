@@ -261,7 +261,7 @@ class MaskedAutoregressiveFlow(BaseFlow):
             self.hidden,
             context_features=self.contexts,
             num_blocks=self.blocks,
-            use_residual=residual,
+            use_residual_blocks=residual,
             random_mask=False,
             activation=self.activation,
             dropout_probability=self.dropout,
