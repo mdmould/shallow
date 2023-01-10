@@ -205,20 +205,19 @@ def trainer(
         if verbose:
             print(loss_train, end='')
             if validate:
-                print(f', {loss_valid}')
+                print(f', {loss_valid}', end='')
+            print()
             
         if save:
             np.save(f'{save}.npy', losses, allow_pickle=True)
             
         if loss_track < best_loss:
             if verbose:
-                print('Loss improved')
+                print('Loss improved', end='')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model)
             if save:
-                if verbose:
-                    print(f'Saving to {save}')
                 torch.save(best_model, f'{save}.pt')
                 
         if reduce:
@@ -236,6 +235,9 @@ def trainer(
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
+                
+    if verbose and save:
+        print(save)
                 
     return best_model, losses
 

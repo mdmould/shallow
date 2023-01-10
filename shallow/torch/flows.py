@@ -397,7 +397,7 @@ def trainer(
                 contexts = contexts.split(batch_size)
                 
     if loss is None:
-        loss = lambda i, c: -model.log_prob(i, context=c).mean()
+        loss = lambda i, c=None: -model.log_prob(i, context=c).mean()
     assert callable(loss)
     
     optimizer = get_optimizer(optimizer)(
@@ -481,14 +481,15 @@ def trainer(
         if verbose:
             print(loss_train, end='')
             if validate:
-                print(f', {loss_valid}')
+                print(f', {loss_valid}', end='')
+            print()
             
         if save:
             np.save(f'{save}.npy', losses, allow_pickle=True)
             
         if loss_track < best_loss:
             if verbose:
-                print('Loss improved, saving')
+                print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model)
@@ -510,6 +511,9 @@ def trainer(
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
+                
+    if verbose and save:
+        print(save)
                 
     return best_model, losses
 
