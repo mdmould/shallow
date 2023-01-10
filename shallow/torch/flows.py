@@ -251,8 +251,8 @@ class BaseFlow(Flow):
         
         raise NotImplementedError
         
-        
-class MAF(BaseFlow):
+
+class MaskedAutoregressiveFlow(BaseFlow):
     
     def _get_transform(self, residual=False):
         
@@ -264,7 +264,7 @@ class MAF(BaseFlow):
             use_residual=residual,
             random_mask=False,
             activation=self.activation,
-            dropout_probability=dropout,
+            dropout_probability=self.dropout,
             use_batch_norm=self.norm_within,
             )
     
