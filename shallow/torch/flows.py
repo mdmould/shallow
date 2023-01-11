@@ -293,8 +293,8 @@ class CouplingNeuralSplineFlow(BaseFlow):
             tails=tails,
             tail_bound=bound,
             )
-    
-    
+
+
 class AutoregressiveNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
@@ -407,6 +407,7 @@ def trainer(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
         )
     
+    best_model = deepcopy(model.state_dict())
     best_epoch = 0
     best_loss = np.inf
     losses = {'train': []}
@@ -495,7 +496,7 @@ def trainer(
                 print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
-            best_model = deepcopy(model)
+            best_model = deepcopy(model.state_dict())
             if save:
                 torch.save(best_model, f'{save}.pt')
                 
@@ -517,6 +518,8 @@ def trainer(
                 
     if verbose and save:
         print(save)
+        
+    model.load_state_dict(best_model)
                 
-    return best_model, losses
+    return model, losses
 
