@@ -90,8 +90,8 @@ class BaseFlow(Flow):
         norm_inputs=False, # Standardize parameters, bool or array/tensor
         norm_contexts=False, # Standardize contexts, bool or array/tensor
         transforms=1, # Number of flow layers
-        hidden=1, # Number of hidden units in each block/layer of the net
         blocks=1, # Number of blocks/layers in the net
+        hidden=1, # Number of hidden units in each block/layer of the net
         activation='relu', # Activation function
         dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
         norm_within=False, # Batch normalization within the net
@@ -158,7 +158,7 @@ class BaseFlow(Flow):
         if norm_inputs is not False:
             # Place holder for loading state dict
             if norm_inputs is True:
-                shift, scale = 0.0, 1.0
+                shift, scale = torch.zeros(inputs), torch.ones(inputs)
             # Input tensor to compute mean and variance from
             else:
                 norm_inputs = torch.as_tensor(norm_inputs)
@@ -175,7 +175,7 @@ class BaseFlow(Flow):
             if norm_contexts is not False:
                 # Place holder for loading state dict
                 if norm_contexts is True:
-                    shift, scale = 0.0, 1.0
+                    shift, scale = torch.zeros(inputs), torch.ones(inputs)
                 # Input tensor to compute mean and variance from
                 else:
                     norm_contexts = torch.as_tensor(norm_contexts)
@@ -221,6 +221,7 @@ class BaseFlow(Flow):
             distribution = StandardNormal((inputs,))
         super().__init__(transform, distribution, embedding_net=embedding)
         
+        ## TODO: don't double register modules/parameters
         self._pre_transform = CompositeTransform(pre_transform)
         self._main_transform = CompositeTransform(main_transform)
         

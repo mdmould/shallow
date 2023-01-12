@@ -29,8 +29,8 @@ class MultilayerPerceptron(nn.Module):
         self,
         inputs=1, # Number of input dimensions
         outputs=1, # Number of output dimensions
-        hidden=1, # Number of units in each hidden layer
         layers=1, # Number of hidden layers
+        hidden=1, # Number of units in each hidden layer
         activation='relu', # Activation function
         output_activation=None, # None or activation function for outpt layer
         dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
@@ -47,7 +47,7 @@ class MultilayerPerceptron(nn.Module):
         if norm_inputs is not False:
             # Place holder for loading state dict
             if norm_inputs is True:
-                shift, scale = 0.0, 1.0
+                shift, scale = torch.zeros(inputs), torch.ones(inputs)
             # Input tensor to compute mean and variance from
             else:
                 shift, scale = shift_and_scale(norm_inputs)
@@ -214,7 +214,7 @@ def trainer(
             
         if loss_track < best_loss:
             if verbose:
-                print('Loss improved', end='')
+                print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
