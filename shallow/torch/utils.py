@@ -1,6 +1,7 @@
 import torch
 
 from ..utils import get_func
+from . import train
 
 
 cpu = torch.device('cpu')
@@ -33,7 +34,13 @@ def get_activation(activation, functional=False):
 
 def get_loss(loss):
     
-    return get_func(loss+'Loss', torch.nn)
+    try:
+        return get_func(loss+'Loss', torch.nn)
+    except:
+        try:
+            return get_func(loss+'_loss', torch.nn.functional)
+        except:
+            return get_func(loss, train)
 
 
 def get_optimizer(optimizer):
@@ -44,6 +51,8 @@ def get_optimizer(optimizer):
 def shift_and_scale(inputs):
     
     inputs = torch.as_tensor(inputs)
+    if inputs.ndim == 1:
+        inputs = inputs[:, None]
     mean = torch.mean(inputs, dim=0)
     std = torch.std(inputs, dim=0)
     shift = - mean / std

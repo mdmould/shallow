@@ -76,7 +76,7 @@ class MultilayerPerceptron(nn.Module):
                 shift, scale = torch.zeros(outputs), torch.ones(outputs)
             # Input tensor to compute mean and variance from
             else:
-                shift, scale = shift_and_scale(norm_inputs)
+                shift, scale = shift_and_scale(norm_outputs)
                 self.norm_outputs = True
             self.post = AffineModule(shift, scale)
             
@@ -157,9 +157,10 @@ def trainer(
             y = y.split(batch_size)
 
     if type(loss) is str:
-        loss = get_loss(loss)()
-    else:
-        assert callable(loss)
+        loss = get_loss(loss)
+        if type(loss) is type:
+            loss = loss()
+    assert callable(loss)
             
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
