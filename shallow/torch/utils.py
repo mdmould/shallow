@@ -13,8 +13,10 @@ def get_tensor(data, dtype=torch.get_default_dtype(), device=device):
     return torch.as_tensor(data, dtype=dtype, device=device)
 
 
-def count_parameters(model):
+def count_parameters(model, requires_grad=True):
     
+    if requires_grad:
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
     return sum(p.numel() for p in model.parameters())
 
 

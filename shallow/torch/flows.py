@@ -331,10 +331,10 @@ def trainer(
     epochs=1,
     batch_size=None,
     shuffle=True,
-    reduce=False,
-    stop=False,
+    reduce=None,
+    stop=None,
     verbose=True,
-    save=False,
+    save=None,
     seed=None
     ):
     
@@ -414,7 +414,7 @@ def trainer(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
-    if reduce:
+    if reduce is not NoneNone:
            epoch_reduce = 0
         
     for epoch in range(1, epochs + 1):
@@ -489,7 +489,7 @@ def trainer(
                 print(f', {loss_valid}', end='')
             print()
             
-        if save:
+        if save is not None:
             np.save(f'{save}.npy', losses, allow_pickle=True)
             
         if loss_track < best_loss:
@@ -498,10 +498,10 @@ def trainer(
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
-            if save:
+            if save is not None:
                 torch.save(best_model, f'{save}.pt')
                 
-        if reduce:
+        if reduce is not None:
             if epoch - best_epoch == 0:
                 epoch_reduce = epoch
             if epoch - epoch_reduce > reduce:
@@ -511,7 +511,7 @@ def trainer(
                 for group in optimizer.param_groups:
                     group['lr'] /= 2
                     
-        if stop:
+        if stop is not None:
             if epoch - best_epoch > stop:
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
@@ -521,6 +521,7 @@ def trainer(
         print(save)
         
     model.load_state_dict(best_model)
+    model.eval()
                 
     return model, losses
 

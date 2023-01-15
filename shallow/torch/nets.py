@@ -32,18 +32,18 @@ class MultilayerPerceptron(nn.Module):
         layers=1, # Number of hidden layers
         hidden=1, # Number of units in each hidden layer
         activation='relu', # Activation function
-        output_activation=None, # None or activation function for outpt layer
         dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        output_activation=None, # None or activation function for outpt layer
         norm_inputs=False, # Standardize inputs, bool or array/tensor
+        norm_outputs=False, # Standardize outputs, bool or array/tensor
         ):
         
         super().__init__()
         
         activation = get_activation(activation, functional=False)
         
-        # Input
-        modules = [nn.Linear(inputs, hidden), activation()]
-        # Zero mean + unit variance per dimension
+        # Zero mean + unit variance per input dimension
+        self.norm_inputs = False
         if norm_inputs is not False:
             # Place holder for loading state dict
             if norm_inputs is True:
@@ -51,7 +51,11 @@ class MultilayerPerceptron(nn.Module):
             # Input tensor to compute mean and variance from
             else:
                 shift, scale = shift_and_scale(norm_inputs)
-            modules = [AffineModule(shift, scale)] + modules
+            self.pre = AffineModule(shift, scale)
+            self.norm_inputs = True
+        
+        # Input
+        modules = [nn.Linear(inputs, hidden), activation()]
         
         # Hidden
         for i in range(layers):
@@ -64,11 +68,30 @@ class MultilayerPerceptron(nn.Module):
         if output_activation:
             modules += [get_activation(output_activation, functional=False)()]
             
+        # Zero mean + unit variance per output dimension
+        self.norm_outputs = False
+        if norm_outputs is not False:
+            # Place holder for loading state dict
+            if norm_outputs is True:
+                shift, scale = torch.zeros(outputs), torch.ones(outputs)
+            # Input tensor to compute mean and variance from
+            else:
+                shift, scale = shift_and_scale(norm_inputs)
+                self.norm_outputs = True
+            self.post = AffineModule(shift, scale)
+            
         self.sequential = nn.Sequential(*modules)
         
     def forward(self, inputs):
         
-        return self.sequential(inputs)
+        outputs = inputs
+        if self.norm_inputs:
+            outputs = self.pre(outputs)
+        outputs = self.sequential(outputs)
+        if self.norm_outputs:
+            outputs = self.post(outputs)
+            
+        return outputs
     
     
 def trainer(
@@ -82,11 +105,11 @@ def trainer(
     epochs=1,
     batch_size=None,
     shuffle=True,
-    reduce=False,
-    stop=False,
+    reduce=None,
+    stop=None,
     verbose=True,
-    save=False,
-    seed=None
+    save=None,
+    seed=None,
     ):
     
     if seed is not None:
@@ -148,7 +171,7 @@ def trainer(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
-    if reduce:
+    if reduce is not None:
         epoch_reduce = 0
     
     for epoch in range(1, epochs+1):
@@ -209,7 +232,7 @@ def trainer(
                 print(f', {loss_valid}', end='')
             print()
             
-        if save:
+        if save is not None:
             np.save(f'{save}.npy', losses, allow_pickle=True)
             
         if loss_track < best_loss:
@@ -218,10 +241,10 @@ def trainer(
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
-            if save:
+            if save is not None:
                 torch.save(best_model, f'{save}.pt')
                 
-        if reduce:
+        if reduce is not None:
             if epoch - best_epoch == 0:
                 epoch_reduce = epoch
             if epoch - epoch_reduce > reduce:
@@ -231,17 +254,18 @@ def trainer(
                 for group in optimizer.param_groups:
                     group['lr'] /= 2
                     
-        if stop:
+        if stop is not None:
             if epoch - best_epoch > stop:
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
                 
-    if verbose and save:
+    if verbose and (save is not None):
         print(save)
         
     model.load_state_dict(best_model)
+    model.eval()
                 
-    return best_model, losses
+    return model, losses
 
     
