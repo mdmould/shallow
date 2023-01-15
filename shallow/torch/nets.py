@@ -31,8 +31,8 @@ class MultilayerPerceptron(nn.Module):
         outputs=1, # Number of output dimensions
         layers=1, # Number of hidden layers
         hidden=1, # Number of units in each hidden layer
-        activation='relu', # Activation function
         dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        activation='relu', # Activation function
         output_activation=None, # None or activation function for outpt layer
         norm_inputs=False, # Standardize inputs, bool or array/tensor
         norm_outputs=False, # Standardize outputs, bool or array/tensor

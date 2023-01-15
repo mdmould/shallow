@@ -92,8 +92,8 @@ class BaseFlow(Flow):
         transforms=1, # Number of flow layers
         blocks=1, # Number of blocks/layers in the net
         hidden=1, # Number of hidden units in each block/layer of the net
-        activation='relu', # Activation function
         dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        activation='relu', # Activation function
         norm_within=False, # Batch normalization within the net
         norm_between=False, # Batch normalization between flow layers
         permutation=None, # None, 'random', 'reverse', or list
