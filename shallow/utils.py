@@ -25,26 +25,40 @@ def cartesian_product(axes):
     return np.array(np.meshgrid(*axes, indexing='ij')).reshape(len(axes), -1)
 
 
-def training_split(n, f_train, f_valid=None, seed=None):
+# def training_split(n, f_train, f_valid=None, seed=None):
+    
+#     assert 0 < f_train <= 1
+#     n_train = int(n * f_train)
+    
+#     if f_valid is not None:
+#         assert 0 <= f_valid <= 1 - f_train
+#     else:
+#         f_valid = 1 - f_train
+#     n_valid = int(n * f_valid)
+    
+#     idxs = np.arange(n)
+#     rng = np.random.default_rng(seed)
+#     rng.shuffle(idxs)
+    
+#     train = np.sort(idxs[:n_train])
+#     valid = np.sort(idxs[n_train:n_train+n_valid])
+#     test = np.sort(idxs[n_train+n_valid:])
+    
+#     return train, valid, test
+
+def training_split(n, f_train, seed=None):
     
     assert 0 < f_train <= 1
     n_train = int(n * f_train)
-    
-    if f_valid is not None:
-        assert 0 <= f_valid <= 1 - f_train
-    else:
-        f_valid = 1 - f_train
-    n_valid = int(n * f_valid)
     
     idxs = np.arange(n)
     rng = np.random.default_rng(seed)
     rng.shuffle(idxs)
     
     train = np.sort(idxs[:n_train])
-    valid = np.sort(idxs[n_train:n_train+n_valid])
-    test = np.sort(idxs[n_train+n_valid:])
+    valid = np.sort(idxs[n_train:])
     
-    return train, valid, test
+    return train, valid
 
 
 def get_func(func, lib):
