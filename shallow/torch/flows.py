@@ -175,7 +175,7 @@ class BaseFlow(Flow):
             if norm_contexts is not False:
                 # Place holder for loading state dict
                 if norm_contexts is True:
-                    shift, scale = torch.zeros(inputs), torch.ones(inputs)
+                    shift, scale = torch.zeros(contexts), torch.ones(contexts)
                 # Input tensor to compute mean and variance from
                 else:
                     norm_contexts = torch.as_tensor(norm_contexts)
@@ -366,12 +366,7 @@ def trainer(
         if inputs_valid.ndim == 1:
             inputs_valid = inputs_valid[..., None]
         assert inputs_valid.shape[-1] == inputs.shape[-1]
-        
-        if batch_size is None:
-            inputs_valid = inputs_valid[None, ...]
-        else:
-            inputs_valid = inputs_valid.split(batch_size)
-                
+                        
         if conditional:
             assert contexts_valid is not None
             
@@ -384,9 +379,14 @@ def trainer(
             assert contexts_valid.shape[-1] == contexts.shape[-1]
             
             if batch_size is None:
-                contexts_valid = contexts_valid.split(batch_size)
+                contexts_valid = contexts_valid[None, ...]
             else:
                 contexts_valid = contexts_valid.split(batch_size)
+                
+        if batch_size is None:
+            inputs_valid = inputs_valid[None, ...]
+        else:
+            inputs_valid = inputs_valid.split(batch_size)
                 
     if not shuffle:
         if batch_size is None:
@@ -414,7 +414,7 @@ def trainer(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
-    if reduce is not NoneNone:
+    if reduce is not None:
            epoch_reduce = 0
         
     for epoch in range(1, epochs + 1):
@@ -448,14 +448,18 @@ def trainer(
         if conditional:
             loop = zip(inputs_train, contexts_train)
         else:
-            loop = zip(inputs_train)
+            loop = inputs_train
         if verbose:
             loop = tqdm(loop, total=n)
             
         loss_train = 0
         for batch in loop:
             optimizer.zero_grad()
-            loss_step = loss(*map(lambda _: _.to(device), batch))
+            if conditional:
+                i, c = batch
+                loss_step = loss(i.to(device), c.to(device))
+            else:
+                loss_step = loss(batch.to(device), None)
             loss_step.backward()
             optimizer.step()
             loss_train += loss_step.item()
@@ -478,7 +482,11 @@ def trainer(
                     
                 loss_valid = 0
                 for batch in loop:
-                    loss_valid += loss(*map(lambda _: _.to(device), batch)).item()
+                    if conditional:
+                        i, c = batch
+                        loss_valid += loss(i.to(device), c.to(device)).item()
+                    else:
+                        loss_valid += loss(batch.to(device), None).item()
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
