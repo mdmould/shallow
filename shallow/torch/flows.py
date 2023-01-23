@@ -335,7 +335,7 @@ def trainer(
     stop=None,
     verbose=True,
     save=None,
-    seed=None
+    seed=None,
     ):
     
     if seed is not None:
