@@ -459,7 +459,7 @@ def trainer(
                 i, c = batch
                 loss_step = loss(i.to(device), c.to(device))
             else:
-                loss_step = loss(batch.to(device), None)
+                loss_step = loss(batch.to(device))
             loss_step.backward()
             optimizer.step()
             loss_train += loss_step.item()
@@ -476,7 +476,7 @@ def trainer(
                 if conditional:
                     loop = zip(inputs_valid, contexts_valid)
                 else:
-                    loop = zip(inputs_valid)
+                    loop = inputs_valid
                 if verbose:
                     loop = tqdm(loop, total=n)
                     
@@ -486,7 +486,7 @@ def trainer(
                         i, c = batch
                         loss_valid += loss(i.to(device), c.to(device)).item()
                     else:
-                        loss_valid += loss(batch.to(device), None).item()
+                        loss_valid += loss(batch.to(device)).item()
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
