@@ -4,9 +4,11 @@ from copy import deepcopy
 import torch
 from torch import nn
 
+from ..utils import training_split
 from .utils import (
     cpu, device, get_activation, get_loss, get_optimizer, shift_and_scale,
     )
+from .train import Trainer
 
 
 class AffineModule(nn.Module):
@@ -21,19 +23,43 @@ class AffineModule(nn.Module):
     def forward(self, inputs):
         
         return inputs * self.scale + self.shift
+    
+    
+class MultilayerPerceptron(nn.Module):
+    
+    def __init__(
+        self,
+        inputs=1,
+        outputs=1,
+        contexts=None,
+        layers=1,
+        hidden=1,
+        activation='relu',
+        dropout=0.0,
+        batchnorm=False,
+        ):
+        
+        pass
+    
+    def forward(self, inputs):
+        
+        pass
         
 
-class MultilayerPerceptron(nn.Module):
+## TODO: sub-class MultilayerPerceptron
+class ForwardNet(nn.Module):
     
     def __init__(
         self,
         inputs=1, # Number of input dimensions
         outputs=1, # Number of output dimensions
+        contexts=None, # Number of conditional dimensions
         layers=1, # Number of hidden layers
         hidden=1, # Number of units in each hidden layer
-        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
         activation='relu', # Activation function
-        output_activation=None, # None or activation function for outpt layer
+        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        batchnorm=False,
+        output_activation=None, # None or activation function for output layer
         norm_inputs=False, # Standardize inputs, bool or array/tensor
         norm_outputs=False, # Standardize outputs, bool or array/tensor
         ):
@@ -94,6 +120,30 @@ class MultilayerPerceptron(nn.Module):
         return outputs
     
     
+## TODO: make residual net
+class ResidualBlock(nn.Module):
+    
+    def __init__(self):
+        
+        pass
+    
+    def forward(self):
+        
+        pass
+    
+    
+class ResidualNet(nn.Module):
+    
+    def __init__(self):
+        
+        pass
+    
+    def forward(self):
+        
+        pass
+    
+
+## TODO: sub-class train.Trainer
 def trainer(
     model,
     training_data,
@@ -104,6 +154,7 @@ def trainer(
     weight_decay=0.0,
     epochs=1,
     batch_size=None,
+    batch_size_valid='train', ## TODO None (all), 'train' (batch_size), int
     shuffle=True,
     reduce=None,
     stop=None,
@@ -130,7 +181,15 @@ def trainer(
     if validation_data is not None:
         validate = True
         
-        x_valid, y_valid = validation_data
+        if type(validation_data) is float:
+            train, valid = training_split(x.shape[0], validation_data)
+            x_valid = x[valid]
+            y_valid = y[valid]
+            x = x[train]
+            y = y[train]
+        else:
+            x_valid, y_valid = validation_data
+            
         x_valid = torch.as_tensor(x_valid, dtype=torch.float32, device=cpu)
         y_valid = torch.as_tensor(y_valid, dtype=torch.float32, device=cpu)
         if x_valid.ndim == 1:
@@ -141,12 +200,16 @@ def trainer(
         assert x_valid.shape[-1] == x.shape[-1]
         assert y_valid.shape[-1] == y.shape[-1]
         
-        if batch_size is None:
+        if (batch_size is None or
+            ((batch_size_valid == 'train') and (batch_size is None))
+            ):
             x_valid = x_valid[None, ...]
             y_valid = y_valid[None, ...]
         else:
-            x_valid = x_valid.split(batch_size)
-            y_valid = y_valid.split(batch_size)
+            if batch_size_valid == 'train':
+                batch_size_valid = batch_size
+            x_valid = x_valid.split(batch_size_valid)
+            y_valid = y_valid.split(batch_size_valid)
         
     if not shuffle:
         if batch_size is None:
@@ -203,6 +266,9 @@ def trainer(
         for xx, yy in loop:
             optimizer.zero_grad()
             loss_step = loss(model(xx.to(device)), yy.to(device))
+            if loss_step.isnan() or loss_step.isinf():
+                print('inf or nan loss, stopping')
+                break
             loss_step.backward()
             optimizer.step()
             loss_train += loss_step.item()
@@ -222,7 +288,9 @@ def trainer(
                 
                 loss_valid = 0
                 for xx, yy in loop:
-                    loss_valid += loss(model(xx.to(device)), yy.to(device)).item()
+                    loss_valid += loss(
+                        model(xx.to(device)), yy.to(device),
+                        ).item()
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid

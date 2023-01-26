@@ -31,6 +31,7 @@ from nflows.transforms import(
 
 from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
 from .nets import AffineModule
+from .train import Trainer
 
 
 # Apply indpendent feature-wise (i.e., last axis) transforms
@@ -68,8 +69,8 @@ class FeaturewiseTransform(Transform):
         
         return self._map(
             (t.inverse for t in self.transforms), inputs, context=context)
-    
-    
+
+
 # Wrapper inspired by features from sbi and glasflow
 # https://github.com/mackelab/sbi/blob/main/sbi/neural_nets/flow.py
 # https://github.com/igr-ml/glasflow/blob/main/src/glasflow/flows/coupling.py
@@ -92,10 +93,10 @@ class BaseFlow(Flow):
         transforms=1, # Number of flow layers
         blocks=1, # Number of blocks/layers in the net
         hidden=1, # Number of hidden units in each block/layer of the net
-        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
         activation='relu', # Activation function
-        norm_within=False, # Batch normalization within the net
-        norm_between=False, # Batch normalization between flow layers
+        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
+        batchnorm_within=False, # Batch normalization within the net
+        batchnorm_between=False, # Batch normalization between flow layers
         permutation=None, # None, 'random', 'reverse', or list
         linear=None, # None or 'lu'
         embedding=None, # Network to embed contexts
@@ -109,7 +110,7 @@ class BaseFlow(Flow):
         self.blocks = blocks
         self.activation = get_activation(activation, functional=True)
         self.dropout = dropout
-        self.norm_within = norm_within
+        self.batchnorm_within = batchnorm_within
         
         # Fixed pre-transforms for bounded densities and standardization
         pre_transform = []
@@ -213,7 +214,7 @@ class BaseFlow(Flow):
             main_transform.append(self._get_transform(**kwargs))
             
             # Batch normalization at the end of the flow layers
-            if norm_between:
+            if batchnorm_between:
                 main_transform.append(BatchNorm(inputs))
                 
         transform = CompositeTransform(pre_transform + main_transform)
@@ -253,9 +254,12 @@ class BaseFlow(Flow):
         raise NotImplementedError
         
 
-class MaskedAutoregressiveFlow(BaseFlow):
+# Masked affine autoregressivle flow
+# Use InverseTransform(AffineAutoregressiveFlow)
+# for inverse autoregressive flow
+class AffineAutoregressiveFlow(BaseFlow):
     
-    def _get_transform(self, residual=False):
+    def _get_transform(self, residual=False, mask=False):
         
         return MaskedAffineAutoregressiveTransform(
             self.inputs,
@@ -263,24 +267,29 @@ class MaskedAutoregressiveFlow(BaseFlow):
             context_features=self.contexts,
             num_blocks=self.blocks,
             use_residual_blocks=residual,
-            random_mask=False,
+            random_mask=mask,
             activation=self.activation,
             dropout_probability=self.dropout,
-            use_batch_norm=self.norm_within,
+            use_batch_norm=self.batchnorm_within,
             )
     
-    
+
+## TODO: allow non-residual blocks
 class CouplingNeuralSplineFlow(BaseFlow):
     
-    def _get_transform(self, mask='mid', bins=5, tails='linear', bound=5.0):
+    def _get_transform(
+        self, residual=True, mask='mid', bins=5, tails='linear', bound=5.0,
+        ):
         
-        return PiecewiseRationalQuadraticCouplingTransform(
-            mask=dict(
+        if type(mask) is str:
+            mask = dict(
                 alternating=create_alternating_binary_mask(self.inputs),
                 mid=create_mid_split_binary_mask(self.inputs),
                 random=create_random_binary_mask(self.inputs),
-                )[mask] if type(mask) is str else mask,
-            transform_net_create_fn=lambda inputs, outputs: ResidualNet(
+                )[mask]
+            
+        if residual:
+            net = lambda inputs, outputs: ResidualNet(
                 inputs,
                 outputs,
                 hidden_features=self.hidden,
@@ -288,8 +297,14 @@ class CouplingNeuralSplineFlow(BaseFlow):
                 num_blocks=self.blocks,
                 activation=self.activation,
                 dropout_probability=self.dropout,
-                use_batch_norm=self.norm_within,
-                ),
+                use_batch_norm=self.batchnorm_within,
+                )
+        else:
+            net = lambda inputs, outputs: None
+        
+        return PiecewiseRationalQuadraticCouplingTransform(
+            mask=mask,
+            transform_net_create_fn=net,
             num_bins=bins,
             tails=tails,
             tail_bound=bound,
@@ -299,7 +314,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
 class AutoregressiveNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
-        self, residual=True, mask=False, bins=5, tails='linear', bound=5.0,
+        self, residual=False, mask=False, bins=5, tails='linear', bound=5.0,
         ):
         
         return MaskedPiecewiseRationalQuadraticAutoregressiveTransform(
@@ -314,10 +329,11 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             random_mask=mask,
             activation=self.activation,
             dropout_probability=self.dropout,
-            use_batch_norm=self.norm_within,
+            use_batch_norm=self.batchnorm_within,
             )
     
-    
+
+## TODO: sub-class train.Trainer
 def trainer(
     model,
     inputs,
@@ -330,6 +346,7 @@ def trainer(
     weight_decay=0,
     epochs=1,
     batch_size=None,
+    batch_size_valid='train', ## TODO None (all), 'train' (batch_size), int
     shuffle=True,
     reduce=None,
     stop=None,
@@ -378,15 +395,23 @@ def trainer(
             assert contexts_valid.shape[0] == inputs_valid.shape[0]
             assert contexts_valid.shape[-1] == contexts.shape[-1]
             
-            if batch_size is None:
+            if (batch_size_valid is None or
+                ((batch_size_valid == 'train') and (batch_size is None))
+                ):
                 contexts_valid = contexts_valid[None, ...]
             else:
-                contexts_valid = contexts_valid.split(batch_size)
+                if batch_size_valid == 'train':
+                    batch_size_valid = batch_size
+                contexts_valid = contexts_valid.split(batch_size_valid)
                 
-        if batch_size is None:
+        if (batch_size_valid is None or
+            ((batch_size_valid == 'train') and (batch_size is None))
+            ):
             inputs_valid = inputs_valid[None, ...]
         else:
-            inputs_valid = inputs_valid.split(batch_size)
+            if batch_size_valid == 'train':
+                batch_size_valid = batch_size
+            inputs_valid = inputs_valid.split(batch_size_valid)
                 
     if not shuffle:
         if batch_size is None:
