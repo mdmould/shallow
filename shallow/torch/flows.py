@@ -350,6 +350,7 @@ def trainer(
     shuffle=True,
     reduce=None,
     stop=None,
+    stop_ifnot_finite=True,
     verbose=True,
     save=None,
     seed=None,
@@ -480,13 +481,22 @@ def trainer(
         loss_train = 0
         for batch in loop:
             optimizer.zero_grad()
+            
             if conditional:
                 i, c = batch
                 loss_step = loss(i.to(device), c.to(device))
             else:
                 loss_step = loss(batch.to(device))
-            loss_step.backward()
-            optimizer.step()
+                
+            if loss_step.isfinite():
+                loss_isfinite = True
+                loss_step.backward()
+                optimizer.step()
+            else:
+                loss_isfinite = False
+                if stop_ifnot_finite:
+                    break
+            
             loss_train += loss_step.item()
         loss_train /= n
         losses['train'].append(loss_train)
@@ -507,14 +517,28 @@ def trainer(
                     
                 loss_valid = 0
                 for batch in loop:
+                    
                     if conditional:
                         i, c = batch
-                        loss_valid += loss(i.to(device), c.to(device)).item()
+                        loss_step += loss(i.to(device), c.to(device))
                     else:
-                        loss_valid += loss(batch.to(device)).item()
+                        loss_step += loss(batch.to(device))
+                        
+                    if loss_step.isfinite():
+                        loss_isfinite = True
+                    else:
+                        loss_isfinite = False
+                        if stop_ifnot_finite:
+                            break
+                        
+                    loss_valid += loss_step.item()
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
+                
+        if stop_ifnot_finite and not loss_isfinite:
+            print('nan/inf loss, stopping')
+            break
             
         if verbose:
             print(loss_train, end='')
