@@ -8,8 +8,10 @@ cpu = torch.device('cpu')
 gpu = torch.device('cuda')
 device = gpu if torch.cuda.is_available() else cpu
 
+dtype = torch.get_default_dtype()
 
-def get_tensor(data, dtype=torch.get_default_dtype(), device=device):
+
+def get_tensor(data, dtype=dtype, device=device):
     
     return torch.as_tensor(data, dtype=dtype, device=device)
 
@@ -35,10 +37,10 @@ def get_activation(activation, functional=False):
 def get_loss(loss):
     
     try:
-        return get_func(loss+'Loss', torch.nn)
+        return get_func(loss + 'Loss', torch.nn)
     except:
         try:
-            return get_func(loss+'_loss', torch.nn.functional)
+            return get_func(loss + '_loss', torch.nn.functional)
         except:
             return get_func(loss, train)
 
@@ -55,7 +57,7 @@ def shift_and_scale(inputs):
         inputs = inputs[:, None]
     mean = torch.mean(inputs, dim=0)
     std = torch.std(inputs, dim=0)
-    shift = - mean / std
+    shift = -mean / std
     scale = 1.0 / std
     
     return shift, scale
