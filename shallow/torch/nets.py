@@ -154,10 +154,11 @@ def trainer(
     weight_decay=0.0,
     epochs=1,
     batch_size=None,
-    batch_size_valid='train', ## TODO None (all), 'train' (batch_size), int
+    batch_size_valid='train',
     shuffle=True,
     reduce=None,
     stop=None,
+    stop_ifnot_finite=True,
     verbose=True,
     save=None,
     seed=None,
@@ -266,12 +267,17 @@ def trainer(
         for xx, yy in loop:
             optimizer.zero_grad()
             loss_step = loss(model(xx.to(device)), yy.to(device))
-            if loss_step.isnan() or loss_step.isinf():
-                print('inf or nan loss, stopping')
-                break
-            loss_step.backward()
-            optimizer.step()
-            loss_train += loss_step.item()
+            
+            if loss_step.isfinite():
+                loss_isfinite = True
+                loss_step.backward()
+                optimizer.step()
+                loss_train += loss_step.item()
+            else:
+                loss_isfinite = False
+                if stop_ifnot_finite:
+                    break
+
         loss_train /= n
         losses['train'].append(loss_train)
         loss_track = loss_train
@@ -288,13 +294,24 @@ def trainer(
                 
                 loss_valid = 0
                 for xx, yy in loop:
-                    loss_valid += loss(
-                        model(xx.to(device)), yy.to(device),
-                        ).item()
+                    loss_step = loss(model(xx.to(device)), yy.to(device))
+                    
+                    if loss_step.isfinite():
+                        loss_isfinite = True
+                        loss_valid += loss_step.item()
+                    else:
+                        loss_isfinite = False
+                        if stop_ifnot_finite:
+                            break
+
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
-            
+
+        if stop_ifnot_finite and not loss_isfinite:
+            print('nan/inf loss, stopping')
+            break
+
         if verbose:
             print(loss_train, end='')
             if validate:
