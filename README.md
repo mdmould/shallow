@@ -5,4 +5,6 @@ A collection of `shallow` wrappers around deep learning functionality from `pyto
 ## Installation
 
 `pip install shallow`
+
 `pip install git+https://github.com/bayesiains/nflows@master`
+
