@@ -1,12 +1,13 @@
 import numpy as np
+from time import time
 from itertools import product
 
 
 def timer(func, *args, **kwargs):
     
-    t0 = time.time()
+    t0 = time()
     result = func(*args, **kwargs)
-    print(time.time() - t0)
+    print(time() - t0)
     
     return result
 
