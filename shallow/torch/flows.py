@@ -346,7 +346,7 @@ def trainer(
     weight_decay=0,
     epochs=1,
     batch_size=None,
-    batch_size_valid='train', ## TODO None (all), 'train' (batch_size), int
+    batch_size_valid='train',
     shuffle=True,
     reduce=None,
     stop=None,
@@ -492,12 +492,12 @@ def trainer(
                 loss_isfinite = True
                 loss_step.backward()
                 optimizer.step()
+                loss_train += loss_step.item()
             else:
                 loss_isfinite = False
                 if stop_ifnot_finite:
                     break
-            
-            loss_train += loss_step.item()
+
         loss_train /= n
         losses['train'].append(loss_train)
         loss_track = loss_train
@@ -520,18 +520,18 @@ def trainer(
                     
                     if conditional:
                         i, c = batch
-                        loss_step += loss(i.to(device), c.to(device))
+                        loss_step = loss(i.to(device), c.to(device))
                     else:
-                        loss_step += loss(batch.to(device))
+                        loss_step = loss(batch.to(device))
                         
                     if loss_step.isfinite():
                         loss_isfinite = True
+                        loss_valid += loss_step.item()
                     else:
                         loss_isfinite = False
                         if stop_ifnot_finite:
                             break
-                        
-                    loss_valid += loss_step.item()
+
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
