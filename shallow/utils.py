@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import product
 
 
 def timer(func, *args, **kwargs):
@@ -20,16 +21,21 @@ def seeder(seed, func, *args, **kwargs):
     return result
 
 
-def cartesian_product(axes):
-    # Return all combinations of the items in each axis in axes
-    # axes is a list of lists - one for each parameter
-    # Can be mixed types, which are preserved in the output array
-    # First axis changes first in output
-    # Output array has shape (no. combinations, no. parameters = len(axes))
+# def cartesian_product(axes):
+#     # Return all combinations of the items in each axis in axes
+#     # axes is a list of lists - one for each parameter
+#     # Can be mixed types, which are preserved in the output array
+#     # First axis changes first in output
+#     # Output array has shape (no. combinations, no. parameters = len(axes))
 
-    return np.array(
-        np.meshgrid(*axes, indexing='ij'), dtype=object,
-        ).reshape(len(axes), -1).T
+#     return np.array(
+#         np.meshgrid(*axes, indexing='ij'), dtype=object,
+#         ).reshape(len(axes), -1).T
+
+# For backwards compat
+def cartesian_product(axes):
+    
+    return list(product(*axes))
 
 
 # def training_split(n, f_train, f_valid=None, seed=None):
