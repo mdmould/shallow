@@ -18,10 +18,9 @@ setup(
     license='MIT',
     packages=find_packages(),
     install_requires=[
+        'numpy',
+        'tqdm',
         'torch',
-        #'nflows',
-        #'tensorflow',
-        #'tensorflow-probability',
         ],
     python_requires='>=3.7',
     )

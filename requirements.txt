@@ -1,8 +1,6 @@
-git+https://github.com/bayesiains/nflows@master
-torch
-tensorflow
-tensorflow-probability
 numpy
 matplotlib
 tqdm
+torch
+git+https://github.com/bayesiains/nflows@master
 
