@@ -20,13 +20,19 @@ def kl_divergence(pred, true):
 
 
 def binary_kl_divergence(pred, true):
-    return binary_cross_entropy(pred, true) - binary_cross_entropy(true, true)
+    return (
+        binary_cross_entropy(pred, true) -
+        binary_cross_entropy(true, true)
+        )
 
 
 ## TODO: base training class
 class Trainer:
     
-    def __init__(self):
+    def __init__(
+        self,
+        
+        ):
         
         pass
 
