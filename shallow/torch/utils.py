@@ -15,6 +15,14 @@ def get_tensor(data, dtype=dtype, device=device):
     
     return torch.as_tensor(data, dtype=dtype, device=device)
 
+ 
+def load_model(model, file):
+
+    model.load_state_dict(torch.load(file))
+    model.eval()
+    
+    return model
+
 
 def count_parameters(model, requires_grad=True):
     

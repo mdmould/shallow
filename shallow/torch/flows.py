@@ -132,11 +132,6 @@ class BaseFlow(Flow):
             distribution = StandardNormal((inputs,))
         super().__init__(transform, distribution, embedding_net=embedding)
         
-    def load(self, file):
-        
-        self.load_state_dict(torch.load(file))
-        self.eval()
-        
     def prob(self, inputs, context=None):
 
         return torch.exp(self.log_prob(inputs, context=context))
