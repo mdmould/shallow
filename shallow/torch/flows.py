@@ -30,8 +30,25 @@ from nflows.transforms import(
     )
 
 from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
-from .nets import AffineModule
+from .nets import NormModule
 from .train import Trainer
+
+
+class NormTransform(AffineTransform):
+    
+    def __init__(self, inputs, norm):
+        
+        # Placeholder for loading state dict
+        if norm is True:
+            shift, scale = torch.zeros(inputs), torch.ones(inputs)
+        
+        # Tensor to compute mean and variance from
+        else:
+            norm = torch.as_tensor(norm)
+            assert norm.shape[-1] == inputs
+            shift, scale = shift_and_scale(norm)
+            
+        super().__init__(shift, scale)
 
 
 # Apply indpendent feature-wise (i.e., last axis) transforms
@@ -159,18 +176,7 @@ class BaseFlow(Flow):
     
     def _get_embedding(self, norm_contexts, embedding):
             
-        # Place holder for loading state dict
-        if norm_contexts is True:
-            shift = torch.zeros(self.contexts)
-            scale = torch.ones(self.contexts)
-
-        # Input tensor to compute mean and variance from
-        else:
-            norm_contexts = torch.as_tensor(norm_contexts)
-            assert norm_contexts.size(-1) == self.contexts
-            shift, scale = shift_and_scale(norm_contexts)
-
-        norm_embedding = AffineModule(shift, scale)
+        norm_embedding = NormModule(self.contexts, norm_contexts)
 
         # Rescaling before context embedding network
         if embedding is None:
@@ -180,6 +186,7 @@ class BaseFlow(Flow):
                 
         return embedding
 
+    # Combine per-dimension bounds into one bijection
     def _get_bounds_transform(self, bounds):
         
         assert len(bounds) == self.inputs
@@ -217,50 +224,24 @@ class BaseFlow(Flow):
                     InverseTransform(Sigmoid()),
                     ]))
 
-        # Combine per-dimension bijections into one bijection
-        featurewise_transform = FeaturewiseTransform(featurewise_transforms)
-        
-        return featurewise_transform
-    
-    def _get_norms_transform(self, bounds, norm_inputs):
-        
-        # Place holder for loading state dict
-        if norm_inputs is True:
-            shift, scale = torch.zeros(self.inputs), torch.ones(self.inputs)
-            
-        # Input tensor to compute mean and variance from
-        else:
-            norm_inputs = torch.as_tensor(norm_inputs)
-            assert norm_inputs.size(-1) == self.inputs
-            
-            # Rescaling after boundary-enforcing bijection
-            if bounds is not None:
-                norm_inputs = self._pre_transforms[0].forward(norm_inputs)[0]
-            shift, scale = shift_and_scale(norm_inputs)
-            
-        norm_transform = AffineTransform(shift, scale)
-        
-        return norm_transform
-    
+        return FeaturewiseTransform(featurewise_transforms)
+
+    # Fixed pre-transforms for bounded densities and standardization
     def _get_pre_transform(self, bounds, norm_inputs):
         
-        # Fixed pre-transforms for bounded densities and standardization
-        pre_transforms = []
+        pre_transform = IdentityTransform()
 
         # Enforce boundaries
         if bounds is not None:
-            pre_transforms.append(self._get_bounds_transform(bounds))
+            pre_transform = self._get_bounds_transform(bounds)
             
         # Zero mean + unit variance per parameter dimension
         if norm_inputs is not False:
-            pre_transforms.append(
-                self._get_norms_transform(bounds, norm_inputs),
+            if norm_inputs is not True:
+                norm_inputs = pre_transform(torch.as_tensor(norm_inputs))
+            pre_transform = CompositeTransform(
+                [pre_transform, NormTransform(self.inputs, norm_inputs)],
                 )
-            
-        if len(pre_transforms) == 0:
-            pre_transform = IdentityTransform()
-        else:
-            pre_transform = CompositeTransform(pre_transforms)
             
         return pre_transform
     
@@ -295,10 +276,8 @@ class BaseFlow(Flow):
             # Batch normalization at the end of the flow layers
             if batchnorm_between:
                 main_transforms.append(BatchNorm(self.inputs))
-                
-        main_transform = CompositeTransform(main_transforms)
 
-        return main_transform
+        return CompositeTransform(main_transforms)
     
     def _get_transform(self, **kwargs):
         

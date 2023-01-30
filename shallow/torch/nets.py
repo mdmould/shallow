@@ -25,7 +25,119 @@ class AffineModule(nn.Module):
         return inputs * self.scale + self.shift
     
     
-class MultilayerPerceptron(nn.Module):
+class Norm
+    
+class NormModule(AffineModule):
+    
+    def __init__(self, inputs, norm):
+        
+        # Placeholder for loading state dict
+        if norm is True:
+            shift, scale = torch.zeros(inputs), torch.ones(inputs)
+            
+        # Tensor to compute mean and variance from
+        else:
+            norm = torch.as_tensor(norm)
+            assert norm.shape[-1] == inputs
+            shift, scale = shift_and_scale(norm)
+            
+        super().__init__(shift, scale)
+    
+
+## TODO: make context dimensions
+## Either append contexts to inputs, or add context layer
+class ForwardBlock(nn.Module):
+    
+    def __init__(
+        self,
+        hidden=1,
+        activation='relu',
+        dropout=0.0,
+        batchnorm=False,
+        ):
+        
+        super().__init__()
+        
+        modules = [nn.Linear(hidden, hidden)]
+        
+        if batchnorm:
+            modules.append(nn.BatchNorm1d(hidden))
+            
+        modules.append(get_activation(activation, functional=False)())
+        
+        if dropout > 0:
+            modules.append(nn.Dropout(dropout))
+        
+        self.sequential = nn.Sequential(*modules)
+        
+    def forward(self, inputs):
+        
+        return self.sequential(inputs)
+    
+    
+class ForwardNet(nn.Module):
+    
+    def __init__(
+        self,
+        inputs=1,
+        outputs=1,
+        layers=1,
+        hidden=1,
+        activation='relu',
+        dropout=0.0,
+        batchnorm=False,
+        output_activation=None,
+        norm_inputs=False,
+        norm_outputs=False,
+        ):
+        
+        super().__init__()
+        
+        if norm_inputs is not False:
+            self.norm_inputs = True
+            self.pre = NormModule(inputs, norm_inputs)
+        else:
+            self.norm_inputs = False
+
+        activation = get_activation(activation, functional=False)
+        
+        modules = [nn.Linear(inputs, hidden), activation()]
+        
+        for _ in range(layers):
+            modules.append(
+                ForwardBlock(hidden, activation, dropout, batchnorm),
+                )
+        
+        modules.append(nn.Linear(hidden, outputs))
+        if output_activation is not None:
+            modules.append(
+                get_activation(output_activation, functional=False)(),
+                )
+            
+        self.main = nn.Sequential(*modules)
+            
+        if norm_outputs is not False:
+            self.norm_outputs = True
+            self.post = NormModule(outputs, norm_outputs)
+        else:
+            self.norm_outputs = False
+            
+    def forward(self, inputs):
+        
+        outputs = inputs
+        
+        if self.norm_inputs:
+            outputs = self.pre(outputs)
+            
+        outputs = self.main(outputs)
+        
+        if self.norm_outputs:
+            outputs = self.post(outputs)
+            
+        return outputs
+    
+    
+class ContextForwardNet(ForwardNet):
     
     def __init__(
         self,
@@ -37,89 +149,18 @@ class MultilayerPerceptron(nn.Module):
         activation='relu',
         dropout=0.0,
         batchnorm=False,
+        output_activation=None,
+        norm_inputs=False,
+        norm_outputs=False,
         ):
         
         pass
     
-    def forward(self, inputs):
+    def forward(self, inputs, context=None):
         
         pass
-        
 
-## TODO: sub-class MultilayerPerceptron
-class ForwardNet(nn.Module):
-    
-    def __init__(
-        self,
-        inputs=1, # Number of input dimensions
-        outputs=1, # Number of output dimensions
-        contexts=None, # Number of conditional dimensions
-        layers=1, # Number of hidden layers
-        hidden=1, # Number of units in each hidden layer
-        activation='relu', # Activation function
-        dropout=0.0, # Dropout probability for hidden units, 0 <= dropout < 1
-        batchnorm=False,
-        output_activation=None, # None or activation function for output layer
-        norm_inputs=False, # Standardize inputs, bool or array/tensor
-        norm_outputs=False, # Standardize outputs, bool or array/tensor
-        ):
-        
-        super().__init__()
-        
-        activation = get_activation(activation, functional=False)
-        
-        # Zero mean + unit variance per input dimension
-        self.norm_inputs = False
-        if norm_inputs is not False:
-            # Place holder for loading state dict
-            if norm_inputs is True:
-                shift, scale = torch.zeros(inputs), torch.ones(inputs)
-            # Input tensor to compute mean and variance from
-            else:
-                shift, scale = shift_and_scale(norm_inputs)
-            self.pre = AffineModule(shift, scale)
-            self.norm_inputs = True
-        
-        # Input
-        modules = [nn.Linear(inputs, hidden), activation()]
-        
-        # Hidden
-        for i in range(layers):
-            modules += [nn.Linear(hidden, hidden), activation()]
-            if dropout != 0.0:
-                modules += [nn.Dropout(dropout)]
-        
-        # Output
-        modules += [nn.Linear(hidden, outputs)]
-        if output_activation:
-            modules += [get_activation(output_activation, functional=False)()]
-            
-        # Zero mean + unit variance per output dimension
-        self.norm_outputs = False
-        if norm_outputs is not False:
-            # Place holder for loading state dict
-            if norm_outputs is True:
-                shift, scale = torch.zeros(outputs), torch.ones(outputs)
-            # Input tensor to compute mean and variance from
-            else:
-                shift, scale = shift_and_scale(norm_outputs)
-                self.norm_outputs = True
-            self.post = AffineModule(shift, scale)
-            
-        self.sequential = nn.Sequential(*modules)
-        
-    def forward(self, inputs):
-        
-        outputs = inputs
-        if self.norm_inputs:
-            outputs = self.pre(outputs)
-        outputs = self.sequential(outputs)
-        if self.norm_outputs:
-            outputs = self.post(outputs)
-            
-        return outputs
-    
-    
+
 ## TODO: make residual net
 class ResidualBlock(nn.Module):
     
