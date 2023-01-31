@@ -1,7 +1,7 @@
 import torch
 
 from ..utils import get_func
-from . import train
+from . import training
 
 
 cpu = torch.device('cpu')
@@ -32,25 +32,37 @@ def count_parameters(model, requires_grad=True):
 
 
 def get_activation(activation, functional=False):
-        
+
     if functional:
         try:
-            return get_func(activation, torch)
+            func = get_func(activation, torch)
         except:
-            return get_func(activation, torch.nn.functional)
+            func = get_func(activation, torch.nn.functional)
     
-    return get_func(activation, torch.nn)
+    else:
+        func = get_func(activation, torch.nn)
+        
+    if type(func) is type:
+        func = func()
+        
+    return func()
 
 
-def get_loss(loss):
+def get_loss(loss, functional=False):
     
-    try:
-        return get_func(loss + 'Loss', torch.nn)
-    except:
+    if functional:
         try:
-            return get_func(loss + '_loss', torch.nn.functional)
+            func = get_func(loss + '_loss', torch.nn.functional)
         except:
-            return get_func(loss, train)
+            func = get_func(loss, training)
+            
+    else:
+        func = get_func(loss + 'Loss', torch.nn)
+        
+    if type(func) is type:
+        func = func()
+
+    return func
 
 
 def get_optimizer(optimizer):
@@ -60,13 +72,20 @@ def get_optimizer(optimizer):
 
 def shift_and_scale(inputs):
     
-    inputs = torch.as_tensor(inputs)
-    if inputs.ndim == 1:
-        inputs = inputs[:, None]
-    mean = torch.mean(inputs, dim=0)
-    std = torch.std(inputs, dim=0)
-    shift = -mean / std
-    scale = 1.0 / std
+    if type(inputs) is int:
+        shift = torch.zeros(inputs)
+        scale = torch.ones(inputs)
+        
+    else:
+        inputs = torch.as_tensor(inputs)
+        if inputs.ndim == 1:
+            inputs = inputs[:, None]
+            
+        mean = torch.mean(inputs, dim=0)
+        std = torch.std(inputs, dim=0)
+        
+        shift = -mean / std
+        scale = 1.0 / std
     
     return shift, scale
 
