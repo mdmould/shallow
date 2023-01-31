@@ -78,6 +78,8 @@ def training_split(n, f_train, seed=None):
 def get_func(func, lib):
     
     if callable(func):
+        if type(func) is type:
+            func = func()
         return func
     
     assert type(func) is str
