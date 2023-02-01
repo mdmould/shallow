@@ -34,10 +34,17 @@ from .training import Trainer ## TODO
 
 
 class NormTransform(AffineTransform):
-    
-    def __init__(self, inputs, norm):
+
+    def __init__(self, inputs):
+        
+        if type(inputs) is int:
+            shift = torch.zeros(inputs)
+            scale = torch.ones(inputs)
             
-        super().__init__(*shift_and_scale(inputs if norm is True else Norm))
+        else:
+            shift, scale = shift_and_scale(inputs)
+            
+        super().__init__(shift, scale)
 
 
 # Apply indpendent feature-wise (i.e., last axis) transforms
@@ -216,6 +223,12 @@ class BaseFlow(Flow):
                     ]))
 
         return FeaturewiseTransform(featurewise_transforms)
+    
+    def _get_norm_transform(self, norm_inputs):
+        
+        return NormTransform(
+            self.inputs if norm_inputs is True else norm_inputs,
+            )
 
     # Fixed pre-transforms for bounded densities and standardization
     def _get_pre_transform(self, bounds, norm_inputs):
@@ -231,7 +244,7 @@ class BaseFlow(Flow):
             if norm_inputs is not True:
                 norm_inputs = pre_transform(torch.as_tensor(norm_inputs))
             pre_transform = CompositeTransform(
-                [pre_transform, NormTransform(self.inputs, norm_inputs)],
+                [pre_transform, self._get_norm_transform(norm_inputs)],
                 )
             
         return pre_transform

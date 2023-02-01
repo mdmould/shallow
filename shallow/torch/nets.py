@@ -6,7 +6,13 @@ from torch import nn
 
 from ..utils import training_split
 from .utils import (
-    cpu, device, get_activation, get_loss, get_optimizer, shift_and_scale,
+    cpu,
+    device,
+    dtype,
+    get_activation,
+    get_loss,
+    get_optimizer,
+    shift_and_scale,
     )
 from .training import Trainer ## TODO
 
@@ -21,15 +27,22 @@ class AffineModule(nn.Module):
         self.register_buffer('scale', torch.as_tensor(scale))
         
     def forward(self, inputs):
-        
+
         return inputs * self.scale + self.shift
 
-    
+
 class NormModule(AffineModule):
-    
-    def __init__(self, inputs, norm):
+
+    def __init__(self, inputs):
+        
+        if type(inputs) is int:
+            shift = torch.zeros(inputs)
+            scale = torch.ones(inputs)
             
-        super().__init__(*shift_and_scale(inputs if norm is True else Norm))
+        else:
+            shift, scale = shift_and_scale(inputs)
+            
+        super().__init__(shift, scale)
         
         
 class ContextBlock(nn.Module):
@@ -46,27 +59,32 @@ class ContextBlock(nn.Module):
         return self.glu(torch.cat((inputs, self.linear(context)), dim=-1))
     
     
-def BaseBlock(nn.Module):
+class BaseBlock(nn.Module):
     
     def __init__(
         self,
+        inputs=1,
+        outputs=None,
         contexts=None,
         blocks=1,
-        hidden=1,
-        activation='relu',
+        activation=None,
         dropout=0,
         batchnorm=False,
         ):
-        
+
         super().__init__()
-        
+
         modules = []
+        
+        if outputs is None:
+            outputs = inputs
 
         for _ in range(blocks):
-            modules.append(nn.Linear(hidden, hidden))
+            modules.append(nn.Linear(inputs, outputs))
             if batchnorm:
-                modules.append(nn.BatchNorm1d(hidden))
-            modules.append(get_activation(activation, functional=False))
+                modules.append(nn.BatchNorm1d(outputs))
+            if activation is not None:
+                modules.append(get_activation(activation, functional=False))
             
         if dropout > 0:
             modules.append(nn.Dropout(dropout))
@@ -74,9 +92,9 @@ def BaseBlock(nn.Module):
         self.sequential = nn.Sequential(*modules)
         
         if contexts is not None:
-            self.context_block = ContextBlock(contexts, hidden)
+            self.context_block = ContextBlock(contexts, outputs)
         
-    def _forward(self, inputs, context=None):
+    def forward(self, inputs, context=None):
         
         outputs = self.sequential(inputs)
         
@@ -86,43 +104,55 @@ def BaseBlock(nn.Module):
         return outputs
     
     
-def ForwardBlock(BaseBlock):
+class HiddenBlock(BaseBlock):
     
     def __init__(
         self,
-        contexts=None,
         hidden=1,
+        contexts=None,
         activation='relu',
         dropout=0,
         batchnorm=False,
         ):
         
-        super().__init__(contexts, 1, hidden, activation, dropout, batchnorm)
-        
-    def forward(self, inputs, context=None):
-        
-        return self._forward(inputs, context)
+        super().__init__(
+            inputs=hidden,
+            outputs=hidden,
+            contexts=contexts,
+            blocks=1,
+            activation=activation,
+            dropout=dropout,
+            batchnorm=batchnorm,
+            )
 
 
-def ResidualBlock(BaseBlock):
+class ResidualBlock(BaseBlock):
     
     def __init__(
         self,
-        contexts=None,
         hidden=1,
+        contexts=None,
         activation='relu',
         dropout=0,
         batchnorm=False,
         ):
         
-        super().__init__(contexts, 2, hidden, activation, dropout, batchnorm)
+        super().__init__(
+            inputs=hidden,
+            outputs=hidden,
+            contexts=contexts,
+            blocks=2,
+            activation=activation,
+            dropout=dropout,
+            batchnorm=batchnorm,
+            )
         
     def forward(self, inputs, context=None):
         
-        return inputs + self._forward(inputs, context)
+        return inputs + super().forward(inputs, context)
     
     
-def BaseNetwork(nn.Module):
+class BaseNetwork(nn.Module):
     
     def __init__(
         self,
@@ -137,44 +167,40 @@ def BaseNetwork(nn.Module):
         batchnorm=False,
         output_activation=None,
         norm_inputs=False,
-        norm_outputs=False,
         ):
         
         super().__init__()
         
+        modules = []
+        
         if contexts is not None:
             inputs += contexts
-            
-        modules = [
-            nn.Linear(inputs, hidden),
-            get_activation(activation, finctional=False),
-            ]
+        modules.append(
+            BaseBlock(inputs=inputs, outputs=hidden, activation=activation),
+            )
         
-        block = ResidualBlock if residual else ForwardBlock
+        block = ResidualBlock if residual else HiddenBlock
         for _ in range(blocks):
             modules.append(
-                block(contexts, hidden, activation, dropout, batchnorm),
+                block(hidden, contexts, activation, dropout, batchnorm),
                 )
             
-        modules.append(nn.Linear(hidden, outputs))
-        
-        if output_activation is not None:
-            modules.append(
-                get_activation(output_activation, functional=False),
-                )
+        modules.append(
+            BaseBlock(
+                inputs=hidden,
+                outputs=outputs,
+                activation=output_activation,
+                ),
+            )
             
         self.sequential = nn.Sequential(*modules)
         
         self.norm_inputs = False
         if norm_inputs is not False:
             self.norm_inputs = True
-            self.pre = NormModule(inputs, norm_inputs)
-            
-        self.norm_outputs = False
-        if norm_outputs is not False:
-            if norm_outputs is not True:
-                self.norm_outputs = True
-            self.post = NormModule(outputs, norm_outputs)
+            self.pre = NormModule(
+                inputs if norm_inputs is True else norm_inputs,
+                )
             
     def forward(self, inputs, context=None):
         
@@ -184,15 +210,10 @@ def BaseNetwork(nn.Module):
         if self.norm_inputs:
             inputs = self.pre(inputs)
             
-        outputs = self.sequential(inputs)
-        
-        if self.norm_outputs:
-            outputs = self.post(outputs)
-            
-        return outputs
+        return self.sequential(inputs)
     
     
-def ForwardNetwork(BaseNetwork):
+class ForwardNetwork(BaseNetwork):
     
     def __init__(
         self,
@@ -206,26 +227,24 @@ def ForwardNetwork(BaseNetwork):
         batchnorm=False,
         output_activation=None,
         norm_inputs=False,
-        norm_outputs=False,
         ):
         
         super().__init__(
-            inputs,
-            outputs,
-            contexts,
-            False,
-            blocks,
-            hidden,
-            activation,
-            dropout,
-            batchnorm,
-            output_activation,
-            norm_inputs,
-            norm_outputs,
+            inputs=inputs,
+            outputs=outputs,
+            contexts=contexts,
+            residual=False,
+            blocks=blocks,
+            hidden=hidden,
+            activation=activation,
+            dropout=dropout,
+            batchnorm=batchnorm,
+            output_activation=output_activation,
+            norm_inputs=norm_inputs,
             )
 
     
-class ResidualNetwork(nn.Module):
+class ResidualNetwork(BaseNetwork):
 
     def __init__(
         self,
@@ -239,22 +258,20 @@ class ResidualNetwork(nn.Module):
         batchnorm=False,
         output_activation=None,
         norm_inputs=False,
-        norm_outputs=False,
         ):
 
         super().__init__(
-            inputs,
-            outputs,
-            contexts,
-            True,
-            blocks,
-            hidden,
-            activation,
-            dropout,
-            batchnorm,
-            output_activation,
-            norm_inputs,
-            norm_outputs,
+            inputs=inputs,
+            outputs=outputs,
+            contexts=contexts,
+            residual=True,
+            blocks=blocks,
+            hidden=hidden,
+            activation=activation,
+            dropout=dropout,
+            batchnorm=batchnorm,
+            output_activation=output_activation,
+            norm_inputs=norm_inputs,
             )
 
 
@@ -263,6 +280,7 @@ def trainer(
     model,
     training_data,
     validation_data=None,
+    norm_outputs=False,
     loss='mse',
     optimizer='adam',
     learning_rate=1e-3,
@@ -276,7 +294,7 @@ def trainer(
     stop_ifnot_finite=True,
     verbose=True,
     save=None,
-    seed=None,
+    seed=None, ## TODO: leave this arg or let user do it?
     ):
     
     if seed is not None:
@@ -284,14 +302,28 @@ def trainer(
         
     model = model.to(device)
     
+    if type(loss) is str:
+        loss = get_loss(loss)
+    assert callable(loss)
+    loss_ = loss
+            
+    optimizer = get_optimizer(optimizer)(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        )
+    
     x, y = training_data
-    x = torch.as_tensor(x, dtype=torch.float32, device=cpu)
-    y = torch.as_tensor(y, dtype=torch.float32, device=cpu)
+    x = torch.as_tensor(x, dtype=dtype, device=cpu)
+    y = torch.as_tensor(y, dtype=dtype, device=cpu)
     if x.ndim == 1:
         x = x[..., None]
     if y.ndim == 1:
         y = y[..., None]
     assert x.shape[0] == y.shape[0]
+    
+    if norm_outputs:
+        post = NormModule(y)
+        y = post(y)
+        loss = lambda pred, true: loss_(post(pred), true)
     
     validate = False
     if validation_data is not None:
@@ -305,16 +337,18 @@ def trainer(
             y = y[train]
         else:
             x_valid, y_valid = validation_data
-            
-        x_valid = torch.as_tensor(x_valid, dtype=torch.float32, device=cpu)
-        y_valid = torch.as_tensor(y_valid, dtype=torch.float32, device=cpu)
-        if x_valid.ndim == 1:
-            x_valid = x_valid[..., None]
-        if y_valid.ndim == 1:
-            y_valid = y_valid[..., None]
-        assert x_valid.shape[0] == y_valid.shape[0]
-        assert x_valid.shape[-1] == x.shape[-1]
-        assert y_valid.shape[-1] == y.shape[-1]
+            x_valid = torch.as_tensor(x_valid, dtype=dtype, device=cpu)
+            y_valid = torch.as_tensor(y_valid, dtype=dtype, device=cpu)
+            if x_valid.ndim == 1:
+                x_valid = x_valid[..., None]
+            if y_valid.ndim == 1:
+                y_valid = y_valid[..., None]
+            assert x_valid.shape[0] == y_valid.shape[0]
+            assert x_valid.shape[-1] == x.shape[-1]
+            assert y_valid.shape[-1] == y.shape[-1]
+        
+        if norm_outputs:
+            y_valid = post(y_valid)
         
         if (batch_size is None or
             ((batch_size_valid == 'train') and (batch_size is None))
@@ -334,14 +368,6 @@ def trainer(
         else:
             x = x.split(batch_size)
             y = y.split(batch_size)
-
-    if type(loss) is str:
-        loss = get_loss(loss)
-    assert callable(loss)
-            
-    optimizer = get_optimizer(optimizer)(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
-        )
     
     best_model = deepcopy(model.state_dict())
     best_epoch = 0

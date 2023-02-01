@@ -71,21 +71,16 @@ def get_optimizer(optimizer):
 
 
 def shift_and_scale(inputs):
-    
-    if type(inputs) is int:
-        shift = torch.zeros(inputs)
-        scale = torch.ones(inputs)
-        
-    else:
-        inputs = torch.as_tensor(inputs)
-        if inputs.ndim == 1:
-            inputs = inputs[:, None]
-            
-        mean = torch.mean(inputs, dim=0)
-        std = torch.std(inputs, dim=0)
-        
-        shift = -mean / std
-        scale = 1.0 / std
-    
+
+    inputs = torch.as_tensor(inputs, dtype=dtype)
+    if inputs.ndim == 1:
+        inputs = inputs[:, None]
+
+    mean = torch.mean(inputs, dim=0)
+    std = torch.std(inputs, dim=0)
+
+    shift = -mean / std
+    scale = 1.0 / std
+
     return shift, scale
 
