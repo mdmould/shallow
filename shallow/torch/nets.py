@@ -8,11 +8,11 @@ from ..utils import training_split
 from .utils import (
     cpu, device, get_activation, get_loss, get_optimizer, shift_and_scale,
     )
-from .train import Trainer
+from .training import Trainer ## TODO
 
 
 class AffineModule(nn.Module):
-    
+
     def __init__(self, shift, scale):
         
         super().__init__()
@@ -23,65 +23,114 @@ class AffineModule(nn.Module):
     def forward(self, inputs):
         
         return inputs * self.scale + self.shift
-    
-    
-class Norm
+
     
 class NormModule(AffineModule):
     
     def __init__(self, inputs, norm):
+            
+        super().__init__(*shift_and_scale(inputs if norm is True else Norm))
         
-        # Placeholder for loading state dict
-        if norm is True:
-            shift, scale = torch.zeros(inputs), torch.ones(inputs)
-            
-        # Tensor to compute mean and variance from
-        else:
-            norm = torch.as_tensor(norm)
-            assert norm.shape[-1] == inputs
-            shift, scale = shift_and_scale(norm)
-            
-        super().__init__(shift, scale)
+        
+class ContextBlock(nn.Module):
     
-
-## TODO: make context dimensions
-## Either append contexts to inputs, or add context layer
-class ForwardBlock(nn.Module):
+    def __init__(self, contexts, hidden):
+        
+        super().__init__()
+        
+        self.linear = nn.Linear(contexts, hidden)
+        self.glu = nn.GLU(dim=-1)
+        
+    def forward(self, inputs, context):
+        
+        return self.glu(torch.cat((inputs, self.linear(context)), dim=-1))
+    
+    
+def BaseBlock(nn.Module):
     
     def __init__(
         self,
+        contexts=None,
+        blocks=1,
         hidden=1,
         activation='relu',
-        dropout=0.0,
+        dropout=0,
         batchnorm=False,
         ):
         
         super().__init__()
         
-        modules = [nn.Linear(hidden, hidden)]
-        
-        if batchnorm:
-            modules.append(nn.BatchNorm1d(hidden))
+        modules = []
+
+        for _ in range(blocks):
+            modules.append(nn.Linear(hidden, hidden))
+            if batchnorm:
+                modules.append(nn.BatchNorm1d(hidden))
+            modules.append(get_activation(activation, functional=False))
             
-        modules.append(get_activation(activation, functional=False)())
-        
         if dropout > 0:
             modules.append(nn.Dropout(dropout))
-        
+            
         self.sequential = nn.Sequential(*modules)
         
-    def forward(self, inputs):
+        if contexts is not None:
+            self.context_block = ContextBlock(contexts, hidden)
         
-        return self.sequential(inputs)
+    def _forward(self, inputs, context=None):
+        
+        outputs = self.sequential(inputs)
+        
+        if context is not None:
+            outputs = self.context_block(outputs, context)
+            
+        return outputs
     
     
-class ForwardNet(nn.Module):
+def ForwardBlock(BaseBlock):
+    
+    def __init__(
+        self,
+        contexts=None,
+        hidden=1,
+        activation='relu',
+        dropout=0,
+        batchnorm=False,
+        ):
+        
+        super().__init__(contexts, 1, hidden, activation, dropout, batchnorm)
+        
+    def forward(self, inputs, context=None):
+        
+        return self._forward(inputs, context)
+
+
+def ResidualBlock(BaseBlock):
+    
+    def __init__(
+        self,
+        contexts=None,
+        hidden=1,
+        activation='relu',
+        dropout=0,
+        batchnorm=False,
+        ):
+        
+        super().__init__(contexts, 2, hidden, activation, dropout, batchnorm)
+        
+    def forward(self, inputs, context=None):
+        
+        return inputs + self._forward(inputs, context)
+    
+    
+def BaseNetwork(nn.Module):
     
     def __init__(
         self,
         inputs=1,
         outputs=1,
-        layers=1,
+        contexts=None,
+        residual=False,
+        blocks=1,
         hidden=1,
         activation='relu',
         dropout=0.0,
@@ -93,43 +142,49 @@ class ForwardNet(nn.Module):
         
         super().__init__()
         
+        if contexts is not None:
+            inputs += contexts
+            
+        modules = [
+            nn.Linear(inputs, hidden),
+            get_activation(activation, finctional=False),
+            ]
+        
+        block = ResidualBlock if residual else ForwardBlock
+        for _ in range(blocks):
+            modules.append(
+                block(contexts, hidden, activation, dropout, batchnorm),
+                )
+            
+        modules.append(nn.Linear(hidden, outputs))
+        
+        if output_activation is not None:
+            modules.append(
+                get_activation(output_activation, functional=False),
+                )
+            
+        self.sequential = nn.Sequential(*modules)
+        
+        self.norm_inputs = False
         if norm_inputs is not False:
             self.norm_inputs = True
             self.pre = NormModule(inputs, norm_inputs)
-        else:
-            self.norm_inputs = False
-
-        activation = get_activation(activation, functional=False)
-        
-        modules = [nn.Linear(inputs, hidden), activation()]
-        
-        for _ in range(layers):
-            modules.append(
-                ForwardBlock(hidden, activation, dropout, batchnorm),
-                )
-        
-        modules.append(nn.Linear(hidden, outputs))
-        if output_activation is not None:
-            modules.append(
-                get_activation(output_activation, functional=False)(),
-                )
             
-        self.main = nn.Sequential(*modules)
-            
+        self.norm_outputs = False
         if norm_outputs is not False:
-            self.norm_outputs = True
+            if norm_outputs is not True:
+                self.norm_outputs = True
             self.post = NormModule(outputs, norm_outputs)
-        else:
-            self.norm_outputs = False
             
-    def forward(self, inputs):
+    def forward(self, inputs, context=None):
         
-        outputs = inputs
-        
+        if context is not None:
+            inputs = torch.cat((inputs, context), dim=-1)
+            
         if self.norm_inputs:
-            outputs = self.pre(outputs)
+            inputs = self.pre(inputs)
             
-        outputs = self.main(outputs)
+        outputs = self.sequential(inputs)
         
         if self.norm_outputs:
             outputs = self.post(outputs)
@@ -137,14 +192,14 @@ class ForwardNet(nn.Module):
         return outputs
     
     
-class ContextForwardNet(ForwardNet):
+def ForwardNetwork(BaseNetwork):
     
     def __init__(
         self,
         inputs=1,
         outputs=1,
         contexts=None,
-        layers=1,
+        blocks=1,
         hidden=1,
         activation='relu',
         dropout=0.0,
@@ -154,35 +209,54 @@ class ContextForwardNet(ForwardNet):
         norm_outputs=False,
         ):
         
-        pass
-    
-    def forward(self, inputs, context=None):
-        
-        pass
+        super().__init__(
+            inputs,
+            outputs,
+            contexts,
+            False,
+            blocks,
+            hidden,
+            activation,
+            dropout,
+            batchnorm,
+            output_activation,
+            norm_inputs,
+            norm_outputs,
+            )
 
+    
+class ResidualNetwork(nn.Module):
 
-## TODO: make residual net
-class ResidualBlock(nn.Module):
-    
-    def __init__(self):
-        
-        pass
-    
-    def forward(self):
-        
-        pass
-    
-    
-class ResidualNet(nn.Module):
-    
-    def __init__(self):
-        
-        pass
-    
-    def forward(self):
-        
-        pass
-    
+    def __init__(
+        self,
+        inputs=1,
+        outputs=1,
+        contexts=None,
+        blocks=1,
+        hidden=1,
+        activation='relu',
+        dropout=0.0,
+        batchnorm=False,
+        output_activation=None,
+        norm_inputs=False,
+        norm_outputs=False,
+        ):
+
+        super().__init__(
+            inputs,
+            outputs,
+            contexts,
+            True,
+            blocks,
+            hidden,
+            activation,
+            dropout,
+            batchnorm,
+            output_activation,
+            norm_inputs,
+            norm_outputs,
+            )
+
 
 ## TODO: sub-class train.Trainer
 def trainer(
@@ -263,8 +337,6 @@ def trainer(
 
     if type(loss) is str:
         loss = get_loss(loss)
-        if type(loss) is type:
-            loss = loss()
     assert callable(loss)
             
     optimizer = get_optimizer(optimizer)(
@@ -273,7 +345,7 @@ def trainer(
     
     best_model = deepcopy(model.state_dict())
     best_epoch = 0
-    best_loss = np.inf
+    best_loss = float('inf')
     losses = {'train': []}
     if validate:
         losses['valid'] = []
@@ -395,4 +467,3 @@ def trainer(
                 
     return model, losses
 
-    

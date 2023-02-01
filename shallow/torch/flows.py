@@ -2,15 +2,9 @@ import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
 import torch
-from torch import nn
-from nflows.utils import(
-    create_alternating_binary_mask,
-    create_mid_split_binary_mask,
-    create_random_binary_mask,
-    )
-from nflows.nn.nets import ResidualNet
-from nflows.flows import Flow
+
 from nflows.distributions import StandardNormal
+from nflows.flows import Flow
 from nflows.transforms import(
     Transform,
     CompositeTransform,
@@ -28,64 +22,61 @@ from nflows.transforms import(
     PiecewiseRationalQuadraticCouplingTransform,
     MaskedPiecewiseRationalQuadraticAutoregressiveTransform,
     )
+from nflows.utils import(
+    create_alternating_binary_mask,
+    create_mid_split_binary_mask,
+    create_random_binary_mask,
+    )
 
 from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
-from .nets import NormModule
-from .train import Trainer
+from .nets import NormModule, ForwardNetwork, ResidualNetwork
+from .training import Trainer ## TODO
 
 
 class NormTransform(AffineTransform):
     
     def __init__(self, inputs, norm):
-        
-        # Placeholder for loading state dict
-        if norm is True:
-            shift, scale = torch.zeros(inputs), torch.ones(inputs)
-        
-        # Tensor to compute mean and variance from
-        else:
-            norm = torch.as_tensor(norm)
-            assert norm.shape[-1] == inputs
-            shift, scale = shift_and_scale(norm)
             
-        super().__init__(shift, scale)
+        super().__init__(*shift_and_scale(inputs if norm is True else Norm))
 
 
 # Apply indpendent feature-wise (i.e., last axis) transforms
 # similar to:
-# https://www.tensorflow.org/probability/api_docs/python/tfp/bijectors/Blockwise
-# https://pytorch.org/docs/stable/_modules/torch/distributions/transforms.html#StackTransform
-# Details based on https://github.com/bayesiains/nflows/blob/master/nflows/transforms/base.py#L32
+# tnesorflow_probability.bijectors.Blockwise
+# torch.distributions.transforms.StackTransform
 class FeaturewiseTransform(Transform):
 
     def __init__(self, transforms):
     
         super().__init__()
         self.transforms = torch.nn.ModuleList(transforms)
-        self.dim = -1
+        self.dim = 1
         
     def _map(self, transforms, inputs, context=None):
     
         assert inputs.size(self.dim) == len(self.transforms)
 
         outputs = torch.zeros_like(inputs)
-        logabsdet = torch.zeros_like(inputs)
-        for i, transform in enumerate(transforms):
-            outputs[..., [i]], logabsdet[..., i] = transform(
-                inputs[..., [i]], context=context)
-        logabsdet = torch.sum(logabsdet, dim=self.dim)
+        logabsdet = torch.zeros_like(inputs.shape[0])
+        for i in range(len(transforms)):
+            outputs[..., [i]], logabsdet_ = transforms[i](
+                inputs[..., [i]], context=context,
+                )
+            logabsdet += logabsdet_
 
         return outputs, logabsdet
         
     def forward(self, inputs, context=None):
 
         return self._map(
-            (t.forward for t in self.transforms), inputs, context=context)
+            (t.forward for t in self.transforms), inputs, context=context,
+            )
         
     def inverse(self, inputs, context=None):
         
         return self._map(
-            (t.inverse for t in self.transforms), inputs, context=context)
+            (t.inverse for t in self.transforms), inputs, context=context,
+            )
 
 
 # Wrapper inspired by features from sbi and glasflow
@@ -125,7 +116,7 @@ class BaseFlow(Flow):
         self.contexts = contexts
         self.hidden = hidden
         self.blocks = blocks
-        self.activation = get_activation(activation, functional=True)
+        self.activation = activation
         self.dropout = dropout
         self.batchnorm_within = batchnorm_within
             
@@ -182,7 +173,7 @@ class BaseFlow(Flow):
         if embedding is None:
             embedding = norm_embedding
         else:
-            embedding = nn.Sequential(norm_embedding, embedding)
+            embedding = torch.nn.Sequential(norm_embedding, embedding)
                 
         return embedding
 
@@ -284,9 +275,8 @@ class BaseFlow(Flow):
         raise NotImplementedError
         
 
-# Masked affine autoregressivle flow
-# Use InverseTransform(AffineAutoregressiveFlow)
-# for inverse autoregressive flow
+# Masked affine autoregressive flow
+# InverseTransform(AffineAutoregressiveFlow) for inverse autoregressive flow
 class AffineAutoregressiveFlow(BaseFlow):
     
     def _get_transform(self, residual=False, mask=False):
@@ -301,43 +291,6 @@ class AffineAutoregressiveFlow(BaseFlow):
             activation=self.activation,
             dropout_probability=self.dropout,
             use_batch_norm=self.batchnorm_within,
-            )
-    
-
-## TODO: allow non-residual blocks
-class CouplingNeuralSplineFlow(BaseFlow):
-    
-    def _get_transform(
-        self, residual=True, mask='mid', bins=5, tails='linear', bound=5.0,
-        ):
-        
-        if type(mask) is str:
-            mask = dict(
-                alternating=create_alternating_binary_mask(self.inputs),
-                mid=create_mid_split_binary_mask(self.inputs),
-                random=create_random_binary_mask(self.inputs),
-                )[mask]
-            
-        if residual:
-            net = lambda inputs, outputs: ResidualNet(
-                inputs,
-                outputs,
-                hidden_features=self.hidden,
-                context_features=self.contexts,
-                num_blocks=self.blocks,
-                activation=self.activation,
-                dropout_probability=self.dropout,
-                use_batch_norm=self.batchnorm_within,
-                )
-        else:
-            net = lambda inputs, outputs: None
-        
-        return PiecewiseRationalQuadraticCouplingTransform(
-            mask=mask,
-            transform_net_create_fn=net,
-            num_bins=bins,
-            tails=tails,
-            tail_bound=bound,
             )
 
 
@@ -357,11 +310,68 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             num_blocks=self.blocks,
             use_residual_blocks=residual,
             random_mask=mask,
-            activation=self.activation,
+            activation=get_activation(self.activation, functional=True),
             dropout_probability=self.dropout,
             use_batch_norm=self.batchnorm_within,
             )
+
+
+class CouplingNeuralSplineFlow(BaseFlow):
     
+    def _get_transform(
+        self, residual=False, mask='mid', bins=5, tails='linear', bound=5.0,
+        ):
+        
+        if type(mask) is str:
+            mask = dict(
+                alternating=create_alternating_binary_mask(self.inputs),
+                mid=create_mid_split_binary_mask(self.inputs),
+                random=create_random_binary_mask(self.inputs),
+                )[mask]
+
+        net = ResidualNetwork if residual else ForwardNetwork
+        net = lambda inputs, outputs: net(
+            inputs=inputs,
+            outputs=outputs,
+            contexts=self.contexts,
+            blocks=self.blocks,
+            hidden=self.hidden,
+            activation=self.activation,
+            dropout=self.dropout,
+            batchnorm=self.batchnorm_within,
+            )
+
+        # if residual:
+        #     net = lambda inputs, outputs: ResidualNet(
+        #         inputs,
+        #         outputs,
+        #         context_features=self.contexts,
+        #         num_blocks=self.blocks,
+        #         hidden_features=self.hidden,
+        #         activation=get_activation(self.activation, functional=True),
+        #         dropout_probability=self.dropout,
+        #         use_batch_norm=self.batchnorm_within,
+        #         )
+        # else:
+        #     net = lambda inputs, outputs: ForwardNet(
+        #         inputs=inputs,
+        #         outputs=outputs,
+        #         contexts=self.contexts,
+        #         blocks=self.blocks,
+        #         hidden=self.hidden,
+        #         activation=self.activation,
+        #         dropout=self.dropout,
+        #         batchnorm=self.batchnorm_within,
+        #         )
+        
+        return PiecewiseRationalQuadraticCouplingTransform(
+            mask=mask,
+            transform_net_create_fn=net,
+            num_bins=bins,
+            tails=tails,
+            tail_bound=bound,
+            )
+
 
 ## TODO: sub-class train.Trainer
 def trainer(
@@ -466,7 +476,7 @@ def trainer(
     
     best_model = deepcopy(model.state_dict())
     best_epoch = 0
-    best_loss = np.inf
+    best_loss = float('inf')
     losses = {'train': []}
     if validate:
         losses['valid'] = []

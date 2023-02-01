@@ -45,7 +45,7 @@ def get_activation(activation, functional=False):
     if type(func) is type:
         func = func()
         
-    return func()
+    return func
 
 
 def get_loss(loss, functional=False):
