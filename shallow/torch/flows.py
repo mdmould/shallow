@@ -106,6 +106,7 @@ class BaseFlow(Flow):
         norm_inputs=False, # Standardize parameters, bool or array/tensor
         norm_contexts=False, # Standardize contexts, bool or array/tensor
         transforms=1, # Number of flow layers
+        residual=False, # MLP (False) or residual network (True)
         blocks=1, # Number of blocks/layers in the net
         hidden=1, # Number of hidden units in each block/layer of the net
         activation='relu', # Activation function
@@ -121,8 +122,9 @@ class BaseFlow(Flow):
         
         self.inputs = inputs
         self.contexts = contexts
-        self.hidden = hidden
+        self.residual = residual
         self.blocks = blocks
+        self.hidden = hidden
         self.activation = activation
         self.dropout = dropout
         self.batchnorm_within = batchnorm_within
@@ -294,14 +296,14 @@ class BaseFlow(Flow):
 # InverseTransform(AffineAutoregressiveFlow) for inverse autoregressive flow
 class AffineAutoregressiveFlow(BaseFlow):
     
-    def _get_transform(self, residual=False, mask=False):
+    def _get_transform(self, mask=False):
         
         return MaskedAffineAutoregressiveTransform(
             self.inputs,
             self.hidden,
             context_features=self.contexts,
             num_blocks=self.blocks,
-            use_residual_blocks=residual,
+            use_residual_blocks=self.residual,
             random_mask=mask,
             activation=self.activation,
             dropout_probability=self.dropout,
@@ -312,7 +314,7 @@ class AffineAutoregressiveFlow(BaseFlow):
 class AutoregressiveNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
-        self, residual=False, mask=False, bins=5, tails='linear', bound=5.0,
+        self, mask=False, bins=5, tails='linear', bound=5.0,
         ):
         
         return MaskedPiecewiseRationalQuadraticAutoregressiveTransform(
@@ -323,7 +325,7 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             tails=tails,
             tail_bound=bound,
             num_blocks=self.blocks,
-            use_residual_blocks=residual,
+            use_residual_blocks=self.residual,
             random_mask=mask,
             activation=get_activation(self.activation, functional=True),
             dropout_probability=self.dropout,
@@ -334,7 +336,7 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
 class CouplingNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
-        self, residual=False, mask='mid', bins=5, tails='linear', bound=5.0,
+        self, mask='mid', bins=5, tails='linear', bound=5.0,
         ):
         
         if type(mask) is str:
@@ -344,7 +346,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
                 random=create_random_binary_mask(self.inputs),
                 )[mask]
 
-        net = ResidualNetwork if residual else ForwardNetwork
+        net = ResidualNetwork if self.residual else ForwardNetwork
         net = lambda inputs, outputs: net(
             inputs=inputs,
             outputs=outputs,
