@@ -56,7 +56,9 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        self.transforms = torch.nn.ModuleList(transforms)
+        # self.transforms = torch.nn.ModuleList(transforms)
+        self.forwards = (t.forward for t in transforms)
+        self.inverses = (t.inverse for t in transforms)
         self.dim = 1
         
     def _map(self, transforms, inputs, context=None):
@@ -65,8 +67,8 @@ class FeaturewiseTransform(Transform):
 
         outputs = torch.zeros_like(inputs)
         logabsdet = torch.zeros(inputs.shape[0])
-        for i in range(len(transforms)):
-            outputs[..., [i]], logabsdet_ = transforms[i](
+        for i, transform in enumerate(transforms):
+            outputs[..., [i]], logabsdet_ = transform(
                 inputs[..., [i]], context=context,
                 )
             logabsdet += logabsdet_
@@ -75,15 +77,15 @@ class FeaturewiseTransform(Transform):
         
     def forward(self, inputs, context=None):
 
-        return self._map(
-            (t.forward for t in self.transforms), inputs, context=context,
-            )
+        return self._map(self.forwards, inputs, context=context)
+            # (t.forward for t in self.transforms), inputs, context=context,
+            # )
         
     def inverse(self, inputs, context=None):
         
-        return self._map(
-            (t.inverse for t in self.transforms), inputs, context=context,
-            )
+        return self._map(self.inverses, inputs, context=context)
+            # (t.inverse for t in self.transforms), inputs, context=context,
+            # )
 
 
 # Wrapper inspired by features from sbi and glasflow
