@@ -247,7 +247,7 @@ class BaseFlow(Flow):
         # Zero mean + unit variance per parameter dimension
         if norm_inputs is not False:
             if norm_inputs is not True:
-                norm_inputs = pre_transform(torch.as_tensor(norm_inputs))
+                norm_inputs = pre_transform(torch.as_tensor(norm_inputs))[0]
             pre_transform = CompositeTransform(
                 [pre_transform, self._get_norm_transform(norm_inputs)],
                 )
@@ -306,7 +306,7 @@ class AffineAutoregressiveFlow(BaseFlow):
             num_blocks=self.blocks,
             use_residual_blocks=self.residual,
             random_mask=mask,
-            activation=self.activation,
+            activation=get_activation(self.activation, functional=True),
             dropout_probability=self.dropout,
             use_batch_norm=self.batchnorm_within,
             )

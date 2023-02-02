@@ -72,7 +72,7 @@ def get_optimizer(optimizer):
 
 def shift_and_scale(inputs):
 
-    inputs = torch.as_tensor(inputs, dtype=dtype)
+    inputs = torch.as_tensor(inputs)
     if inputs.ndim == 1:
         inputs = inputs[:, None]
 
