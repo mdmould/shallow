@@ -56,17 +56,17 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        # self.transforms = torch.nn.ModuleList(transforms)
-        self.forwards = (t.forward for t in transforms)
-        self.inverses = (t.inverse for t in transforms)
-        self.dim = 1
+        
+        self.forwards = [t.forward for t in transforms]
+        self.inverses = [t.inverse for t in transforms]
         
     def _map(self, transforms, inputs, context=None):
     
-        assert inputs.size(self.dim) == len(self.transforms)
+        assert inputs.size(-1) == len(transforms)
 
         outputs = torch.zeros_like(inputs)
         logabsdet = torch.zeros(inputs.shape[0])
+        
         for i, transform in enumerate(transforms):
             outputs[..., [i]], logabsdet_ = transform(
                 inputs[..., [i]], context=context,
@@ -78,14 +78,10 @@ class FeaturewiseTransform(Transform):
     def forward(self, inputs, context=None):
 
         return self._map(self.forwards, inputs, context=context)
-            # (t.forward for t in self.transforms), inputs, context=context,
-            # )
         
     def inverse(self, inputs, context=None):
         
         return self._map(self.inverses, inputs, context=context)
-            # (t.inverse for t in self.transforms), inputs, context=context,
-            # )
 
 
 # Wrapper inspired by features from sbi and glasflow
@@ -133,10 +129,7 @@ class BaseFlow(Flow):
             
         # Zero mean + unit variance per context dimension
         if contexts is not None:
-            if norm_contexts is not False:
-                embedding = self._get_embedding(norm_contexts, embedding)
-        else:
-            assert norm_contexts is False and embedding is None
+            embedding = self._get_embedding(norm_contexts, embedding)
             
         # Pre-transformations for boundaries and normalization
         pre_transform = self._get_pre_transform(bounds, norm_inputs)
@@ -147,8 +140,10 @@ class BaseFlow(Flow):
             )
 
         transform = CompositeTransform([pre_transform, main_transform])
+        
         if distribution is None:
             distribution = StandardNormal((inputs,))
+            
         super().__init__(transform, distribution, embedding_net=embedding)
         
     def prob(self, inputs, context=None):
@@ -178,15 +173,19 @@ class BaseFlow(Flow):
     
     def _get_embedding(self, norm_contexts, embedding):
             
-        norm_embedding = NormModule(
-            self.contexts if norm_contexts is True else norm_contexts,
-            )
+        if norm_contexts is not False:
+            norm_embedding = NormModule(
+                self.contexts if norm_contexts is True else norm_contexts,
+                )
 
-        # Rescaling before context embedding network
-        if embedding is None:
-            embedding = norm_embedding
+            # Rescaling before context embedding network
+            if embedding is None:
+                embedding = norm_embedding
+            else:
+                embedding = torch.nn.Sequential(norm_embedding, embedding)
+                
         else:
-            embedding = torch.nn.Sequential(norm_embedding, embedding)
+            assert embedding is None
                 
         return embedding
 
