@@ -174,7 +174,9 @@ class BaseFlow(Flow):
     
     def _get_embedding(self, norm_contexts, embedding):
             
-        norm_embedding = NormModule(self.contexts, norm_contexts)
+        norm_embedding = NormModule(
+            self.contexts if norm_contexts is True else norm_contexts,
+            )
 
         # Rescaling before context embedding network
         if embedding is None:
