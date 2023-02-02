@@ -348,7 +348,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
                 )[mask]
 
         net = ResidualNetwork if self.residual else ForwardNetwork
-        net = lambda inputs, outputs: net(
+        fn = lambda inputs, outputs: net(
             inputs=inputs,
             outputs=outputs,
             contexts=self.contexts,
@@ -384,7 +384,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
         
         return PiecewiseRationalQuadraticCouplingTransform(
             mask=mask,
-            transform_net_create_fn=net,
+            transform_net_create_fn=fn,
             num_bins=bins,
             tails=tails,
             tail_bound=bound,
