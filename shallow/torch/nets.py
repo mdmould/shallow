@@ -70,7 +70,6 @@ class BaseBlock(nn.Module):
         activation=None,
         dropout=0,
         batchnorm=False,
-        zero_init=True,
         ):
 
         super().__init__()
@@ -82,9 +81,6 @@ class BaseBlock(nn.Module):
 
         for i in range(blocks):
             modules.append(nn.Linear(inputs, outputs))
-            if zero_init and i == blocks - 1:
-                nn.init.uniform_(modules[-1].weight, -1e-3, 1e-3)
-                nn.init.uniform_(modules[-1].bias, -1e-3, 1e-3)
             if batchnorm:
                 modules.append(nn.BatchNorm1d(outputs))
             if activation is not None:
