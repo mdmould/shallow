@@ -31,6 +31,34 @@ def count_parameters(model, requires_grad=True):
     return sum(p.numel() for p in model.parameters())
 
 
+def get_children(model):
+    
+    def recursive(module, children):
+        
+        modules = list(module.children())
+        if len(modules) > 0:
+            for child in modules:
+                recursive(child, children)
+                
+        else:
+            children.append(module)
+            
+        return children
+    
+    return recursive(model, [])
+
+
+def eval_with_dropout(model):
+    
+    for module in get_children(model):
+        if type(module) is torch.nn.modules.dropout.Dropout:
+            module.train()
+        else:
+            module.eval()
+    
+    return model
+
+
 def get_activation(activation, functional=False):
 
     if functional:
