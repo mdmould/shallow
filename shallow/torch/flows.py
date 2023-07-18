@@ -408,7 +408,7 @@ def trainer(
     shuffle=True,
     reduce=None,
     stop=None,
-    stop_ifnot_finite=True,
+    stop_if_inf=True,
     verbose=True,
     save=None,
     seed=None,
@@ -534,7 +534,7 @@ def trainer(
         else:
             loop = inputs_train
         if verbose:
-            loop = tqdm(loop, total=n)
+            loop = tqdm(loop, total=n, desc='Train batch', leave=True)
             
         loss_train = 0
         for batch in loop:
@@ -546,15 +546,15 @@ def trainer(
             else:
                 loss_step = loss(batch.to(device))
                 
-            if loss_step.isfinite():
-                loss_isfinite = True
+            if loss_step.isinf():
+                loss_is_inf = True
+                if stop_if_inf:
+                    break
+            else:
+                loss_is_inf = False
                 loss_step.backward()
                 optimizer.step()
                 loss_train += loss_step.item()
-            else:
-                loss_isfinite = False
-                if stop_ifnot_finite:
-                    break
 
         loss_train /= n
         losses['train'].append(loss_train)
@@ -571,7 +571,7 @@ def trainer(
                 else:
                     loop = inputs_valid
                 if verbose:
-                    loop = tqdm(loop, total=n)
+                    loop = tqdm(loop, total=n, desc='Valid batch', leave=True)
                     
                 loss_valid = 0
                 for batch in loop:
@@ -582,19 +582,19 @@ def trainer(
                     else:
                         loss_step = loss(batch.to(device))
                         
-                    if loss_step.isfinite():
-                        loss_isfinite = True
-                        loss_valid += loss_step.item()
-                    else:
-                        loss_isfinite = False
-                        if stop_ifnot_finite:
+                    if loss_step.isinf():
+                        loss_is_inf = True
+                        if stop_if_inf:
                             break
+                    else:
+                        loss_is_inf = False
+                        loss_valid += loss_step.item()
 
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
                 
-        if stop_ifnot_finite and not loss_isfinite:
+        if stop_if_inf and loss_is_inf:
             print('nan/inf loss, stopping')
             break
             
@@ -631,6 +631,9 @@ def trainer(
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
+
+        if verbose:
+            print()
                 
     if verbose and save:
         print(save)
