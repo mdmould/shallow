@@ -500,9 +500,13 @@ def trainer(
         losses['valid'] = []
     if reduce is not None:
            epoch_reduce = 0
-        
-    for epoch in range(1, epochs + 1):
-        print(f'Epoch {epoch}')
+
+    epoch_loop = range(1, epochs + 1)
+    if not verbose:
+        epoch_loop = tqdm(epoch_loop)
+    for epoch in epoch_loop:
+        if verbose:
+            print(f'Epoch {epoch}')
         
         # Training
         model = model.train()
