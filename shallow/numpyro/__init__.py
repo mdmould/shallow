@@ -483,7 +483,7 @@ def trainer(data, flow, loss_fn, lr, steps):
         if loss == min(losses):
             best_params = deepcopy(params)
 
-    flow.update_params(params)
+    flow.update_params(best_params)
 
     return flow, losses
 
@@ -500,10 +500,12 @@ def sampler(data, flow, log_likelihood, priors):
         ll = log_likelihood(params, data)
         numpyro.factor('log_prob', ll)
 
+        return ll
+
     return model
 
 
-def sample_around_mle(data, flow, lr, steps, log_likelihood, scale):
+def priors_around_mle(data, flow, lr, steps, log_likelihood, scale):
 
     loss_fn = lambda params, data: -log_likelihood(params, data)
     flow, losses = trainer(data, flow, loss_fn, lr, steps)
@@ -514,7 +516,7 @@ def sample_around_mle(data, flow, lr, steps, log_likelihood, scale):
         for key, val in flow.get_params().items()
         }
 
-    return sampler(data, flow, log_likelihood, priors)
+    return priors, losses
 
 
 def sample_from(rng, n, flow, init_params):
