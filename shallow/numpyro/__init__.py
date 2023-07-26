@@ -71,8 +71,8 @@ class Inverse(Transform):
 
     def __init__(self, transform):
 
-        self.transform = transform
         super().__init__(transform.params)
+        self.transform = transform
 
     def _forward(self, x):
 
@@ -155,21 +155,24 @@ class Stack(Transform):
 
     def __init__(self, transforms, dims=None):
 
+        self.transforms = list(transforms)
+        params = [transform.params for transform in self.transforms]
+        super().__init__(params)
         if dims is None:
             dims = list(range(len(transforms)))
         for i in range(len(transforms)):
             dims[i] = jnp.atleast_1d(dims[i])
             assert dims[i].ndim == 1
         self.dims = dims
-        params = [tranform.params for transform in transforms]
-        super().__init__(params)
 
-    def _forward(self, x):
+    def _forward(self, x, params):
 
         y = jnp.empty_like(x)
         ladj = jnp.zeros_like(x.shape[0])
-        for dim, transform in zip(self.dims, self.transforms):
-            y[..., dim], ladj_ = transform._forward(x[..., dim])
+        for dim, transform, params_ in zip(self.dims, self.transforms, params):
+            args = (x[..., dim],) if params_ is None else (x[..., dim], params_)
+            y_, ladj_ = transform._forward(*args)
+            y = y.at[..., dim].set(y_)
             ladj += ladj_
 
         return y, ladj
@@ -213,8 +216,8 @@ class Permute(Transform):
 
     def __init__(self, permutation):
 
-        self.permutation = permutation
         super().__init__()
+        self.permutation = permutation
 
     def forward(self, x):
 
@@ -249,8 +252,8 @@ class Affine(Transform):
     def __init__(self, scale, shift):
 
         super().__init__()
-        self.shift = shift
         self.scale = scale
+        self.shift = shift
         self.ladj = jnp.sum(jnp.log(jnp.abs(self.scale)))
 
     def forward(self, x):
@@ -317,49 +320,19 @@ class Sigmoid(Transform):
             )
 
 
-class BARN(Transform):
-
-    def __init__(self, dims, factors, residual=None, rng=0):
-
-        init_fn, self.apply_fn = numpyro.nn.BlockNeuralAutoregressiveNN(
-            input_dim=dims, hidden_factors=factors, residual=residual,
-            )
-        if type(rng) is int:
-            rng = jax.random.PRNGKey(rng)
-        rng, rng_ = jax.random.split(rng)
-        params = init_fn(rng_, (dims,))[1]
-        super().__init__(params)
-
-    def _forward(self, x, params):
-
-        # y, ladj = self.apply_fn(self.params, x)
-        y, ladj = self.apply_fn(params, x)
-        ladj = jnp.sum(ladj, axis=-1)
-
-        return y, ladj
-
-    def forward(self, x):
-
-        return self._forward(x)[0]
-
-    def log_abs_det_jac(self, x):
-
-        return self._forward(x)[1]
-
-
 class Flow(Compose):
 
     def __init__(self, dims, transforms, bounds=None):
 
+        if bounds is not None:
+            assert len(bounds) == dims
+            transforms = [self._get_bounds_transform(bounds)] + transforms
+
+        super().__init__(transforms)
+        
         self.base = numpyro.distributions.Normal(
             loc=jnp.zeros(dims), scale=jnp.ones(dims),
             ).to_event(1)
-
-        if bounds is not None:
-            assert len(bounds) == dims
-            transforms = self._get_bounds_transforms(bounds) + transforms
-
-        super().__init__(transforms)
 
     def _get_bounds_transform(self, bounds):
 
@@ -374,7 +347,7 @@ class Flow(Compose):
                     shift = bound[1]
                     scale = -1
                 elif bound[1] is None:
-                    shift = bound[1]
+                    shift = bound[0]
                     scale = 1
                 transform = Compose([
                     Inverse(Affine(scale, shift)),
@@ -408,12 +381,39 @@ class Flow(Compose):
 
     def sample(self, rng, n=1):
 
-        if rng is int:
+        if type(rng) is int:
             rng = jax.random.PRNGKey(rng)
         y = self.base.sample(rng, (n,))
         x = self.inverse(y)
 
         return x
+
+
+class BARN(Transform):
+
+    def __init__(self, rng, dims, factors, residual=None):
+
+        init_fn, self.apply_fn = numpyro.nn.BlockNeuralAutoregressiveNN(
+            input_dim=dims, hidden_factors=factors, residual=residual,
+            )
+        params = init_fn(rng, (dims,))[1]
+        super().__init__(params)
+
+    def _forward(self, x, params):
+
+        # y, ladj = self.apply_fn(self.params, x)
+        y, ladj = self.apply_fn(params, x)
+        ladj = jnp.sum(ladj, axis=-1)
+
+        return y, ladj
+
+    def forward(self, x):
+
+        return self._forward(x)[0]
+
+    def log_abs_det_jac(self, x):
+
+        return self._forward(x)[1]
 
 
 class BARF(Flow):
@@ -444,14 +444,23 @@ class BARF(Flow):
                 transforms.append(Permute(permutation))
 
             residual = 'gated' if i < flows - 1 else None
-            transforms.append(BARN(dims, factors, residual, rng))
+            transforms.append(BARN(rng, dims, factors, residual))
 
         super().__init__(dims, transforms, bounds)
 
 
-def trainer(data, flow, lr, steps):
+def cross_entropy_loss(flow):
+
+    return lambda params, data: -flow.log_prob(data, params).mean()
+
+
+def log_likelihood_loss(flow):
+
+    return lambda params, data: -flow.log_prob(data, params).sum()
     
-    loss_fn = lambda params: -flow.log_prob(data, params).sum()
+
+def trainer(data, flow, loss_fn, lr, steps):
+
     loss_and_grad = jax.value_and_grad(loss_fn)
     
     params = flow.params
@@ -461,7 +470,7 @@ def trainer(data, flow, lr, steps):
     @jax.jit
     def update(params, state):
 
-        loss, grads = loss_and_grad(params)
+        loss, grads = loss_and_grad(params, data)
         updates, state = opt.update(grads, state)
         params = optax.apply_updates(params, updates)
 
@@ -477,4 +486,43 @@ def trainer(data, flow, lr, steps):
     flow.update_params(params)
 
     return flow, losses
+
+
+def sampler(data, flow, log_likelihood, priors):
+
+
+    def model():
+    
+        params = flow.get_params()
+        for key in params:
+            params[key] = numpyro.sample(key, priors[key])
+        params = flow.params_dict_to_list(params)
+        ll = log_likelihood(params, data)
+        numpyro.factor('log_prob', ll)
+
+    return model
+
+
+def sample_around_mle(data, flow, lr, steps, log_likelihood, scale):
+
+    loss_fn = lambda params, data: -log_likelihood(params, data)
+    flow, losses = trainer(data, flow, loss_fn, lr, steps)
+    priors = {
+        key: numpyro.distributions.Normal(
+            loc=val, scale=scale,
+            ).to_event(len(val.shape))
+        for key, val in flow.get_params().items()
+        }
+
+    return sampler(data, flow, log_likelihood, priors)
+
+
+def sample_from(rng, n, flow, init_params):
+
+    potential_fn = lambda x: -flow.log_prob(x[None, :]).squeeze()
+    nuts = numpyro.infer.NUTS(potential_fn=potential_fn)
+    mcmc = numpyro.infer.MCMC(sampler=nuts, num_warmup=n, num_samples=n)
+    mcmc.run(rng, init_params=jnp.asarray(init_params))
+
+    return mcmc.get_samples().squeeze()
 
