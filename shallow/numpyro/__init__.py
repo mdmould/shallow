@@ -452,7 +452,7 @@ class BARF(Flow):
 def trainer(data, flow, lr, steps):
     
     loss_fn = lambda params: -flow.log_prob(data, params).sum()
-    loss_and_grad = jax.jit(jax.value_and_grad(loss_fn))
+    loss_and_grad = jax.value_and_grad(loss_fn)
     
     params = flow.params
     opt = optax.adam(lr)
