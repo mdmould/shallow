@@ -483,9 +483,7 @@ def trainer(data, flow, loss_fn, lr, steps):
         if loss == min(losses):
             best_params = deepcopy(params)
 
-    flow.update_params(best_params)
-
-    return flow, losses
+    return best_params, losses
 
 
 def sampler(data, flow, log_likelihood, priors):
@@ -508,12 +506,12 @@ def sampler(data, flow, log_likelihood, priors):
 def priors_around_mle(data, flow, lr, steps, log_likelihood, scale):
 
     loss_fn = lambda params, data: -log_likelihood(params, data)
-    flow, losses = trainer(data, flow, loss_fn, lr, steps)
+    params, losses = trainer(data, flow, loss_fn, lr, steps)
     priors = {
         key: numpyro.distributions.Normal(
             loc=val, scale=scale,
             ).to_event(len(val.shape))
-        for key, val in flow.get_params().items()
+        for key, val in flow.params_list_to_dict(params).items()
         }
 
     return priors, losses
