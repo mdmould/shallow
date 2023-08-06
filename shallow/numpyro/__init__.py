@@ -9,6 +9,11 @@ from copy import deepcopy
 ## TODO: add params as direct input everywhere
 
 
+def count_params(model):
+
+    return sum(param.size for param in model.get_params().values())
+
+
 class Transform:
 
     def __init__(self, params=None):
@@ -44,6 +49,10 @@ class Transform:
     def get_params(self):
 
         return self.params_list_to_dict(self.params)
+
+    def count_params(self):
+
+        return count_params(self)
 
     def update_params(self, params):
 
