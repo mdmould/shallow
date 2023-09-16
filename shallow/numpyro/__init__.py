@@ -227,6 +227,7 @@ class Permute(Transform):
 
         super().__init__()
         self.permutation = permutation
+        self.inverse_permutation = jnp.argsort(permutation)
 
     def forward(self, x):
 
@@ -234,7 +235,7 @@ class Permute(Transform):
 
     def inverse(self, y):
 
-        return self.forward(y)
+        return y[..., self.inverse_permutation]
 
     def log_abs_det_jac(self, x, y):
 
@@ -249,7 +250,7 @@ class Identity(Transform):
 
     def inverse(self, y):
 
-        return self.forward(y)
+        return y
 
     def log_abs_det_jac(self, x, y):
 
