@@ -56,9 +56,10 @@ class FeaturewiseTransform(Transform):
     def __init__(self, transforms):
     
         super().__init__()
-        
-        self.forwards = [t.forward for t in transforms]
-        self.inverses = [t.inverse for t in transforms]
+
+        self.transforms = nn.ModuleList(transforms)
+        self.forwards = [t.forward for t in self.transforms]
+        self.inverses = [t.inverse for t in self.transforms]
         
     def _map(self, transforms, inputs, context=None):
     
