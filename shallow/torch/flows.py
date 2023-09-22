@@ -65,7 +65,7 @@ class FeaturewiseTransform(Transform):
         assert inputs.size(-1) == len(transforms)
 
         outputs = torch.zeros_like(inputs)
-        logabsdet = torch.zeros(inputs.shape[0])
+        logabsdet = torch.zeros_like(inputs[..., 0])
         
         for i, transform in enumerate(transforms):
             outputs[..., [i]], logabsdet_ = transform(
