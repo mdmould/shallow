@@ -50,10 +50,6 @@ class Transform:
 
         return self.params_list_to_dict(self.params)
 
-    def count_params(self):
-
-        return count_params(self)
-
     def update_params(self, params):
 
         if type(params) is dict:
@@ -469,6 +465,7 @@ def log_likelihood_loss(flow):
     return lambda params, data: -flow.log_prob(data, params).sum()
     
 
+## TODO: add batching
 def trainer(data, flow, loss_fn, lr, steps):
 
     loss_and_grad = jax.value_and_grad(loss_fn)
