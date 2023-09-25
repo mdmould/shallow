@@ -429,7 +429,6 @@ class BARF(Flow):
         dims,
         flows,
         factors,
-        residual=None,
         permute=None,
         bounds=None,
         rng=0,
