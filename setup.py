@@ -25,6 +25,7 @@ setup(
         # 'tensorflow',
         # 'jax',
         # 'numpyro',
+        # 'optax',
         ],
     python_requires='>=3.9',
     )
