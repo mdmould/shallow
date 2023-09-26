@@ -222,8 +222,8 @@ class Permute(Transform):
     def __init__(self, permutation):
 
         super().__init__()
-        self.permutation = permutation
-        self.inverse_permutation = jnp.argsort(permutation)
+        self.permutation = jnp.asarray(permutation)
+        self.inverse_permutation = jnp.argsort(self.permutation)
 
     def forward(self, x):
 
@@ -407,7 +407,6 @@ class BARN(Transform):
 
     def _forward(self, x, params):
 
-        # y, ladj = self.apply_fn(self.params, x)
         y, ladj = self.apply_fn(params, x)
         ladj = jnp.sum(ladj, axis=-1)
 
@@ -493,7 +492,6 @@ def trainer(data, flow, loss_fn, lr, steps):
 
 
 def sampler(data, flow, log_likelihood, priors):
-
 
     def model():
     
