@@ -11,7 +11,7 @@ from copy import deepcopy
 
 def count_params(model):
 
-    return sum(param.size for param in model.get_params().values())
+    return model.params_list_to_array().size
 
 
 class Transform:
@@ -46,29 +46,55 @@ class Transform:
 
         raise NotImplementedError
 
-    def get_params(self):
-
-        return self.params_list_to_dict(self.params)
-
     def update_params(self, params):
 
-        if type(params) is dict:
+        if isinstance(params, jnp.ndarray):
+            params = self.params_array_to_list(params)
+        elif type(params) is dict:
             params = self.params_dict_to_list(params)
         self.params = params
 
-    def params_list_to_dict(self, params):
+    def params_list_to_array(self, params_list=None):
+
+        if params_list is None:
+            params_list = self.params
+        
+        return jnp.concatenate([
+            param.flatten()
+            for param in jax.tree_util.tree_flatten(params_list)[0]
+            ])            
+
+    def params_array_to_list(self, params_array): ## TODO: less hacky
+
+        old_list, unflatten = jax.tree_util.tree_flatten(self.params)
+        new_list = []
+        n = 0
+        for old_param in old_list:
+            shape = old_param.shape
+            size = old_param.size
+            new_param = params_array[n:n+size].reshape(shape)
+            new_list.append(new_param)
+            n += size
+
+        return jax.tree_util.tree_unflatten(unflatten, new_list)
+
+    def params_list_to_dict(self, params_list=None):
+
+        if params_list is None:
+            params_list = self.params
+        params_array = self.params_list_to_array(params_list)
+
+        return {str(i): params_array[i] for i in range(params_array.size)}
 
         return {
             jax.tree_util.keystr(loc): val
-            for loc, val in jax.tree_util.tree_leaves_with_path(params)
+            for loc, val in jax.tree_util.tree_leaves_with_path(params_list)
             }
 
-    def params_dict_to_list(self, params):
+    def params_dict_to_list(self, params_dict):
 
-        unflatten = jax.tree_util.tree_flatten(self.params)[1]
-
-        return jax.tree_util.tree_unflatten(
-            unflatten, list(params.values()),
+        return self.params_array_to_list(
+            jnp.array(list(params_dict.values())),
             )
 
 
