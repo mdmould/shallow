@@ -88,9 +88,9 @@ class Transform:
 
     def params_dict_to_list(self, params_dict):
 
-        return self.params_array_to_list(
-            jnp.array(list(params_dict.values())),
-            )
+        return self.params_array_to_list(jnp.array(
+            [params_dict[str(i)] for i in range(len(params_dict))],
+            ))
 
 
 class Inverse(Transform):
