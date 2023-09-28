@@ -86,11 +86,6 @@ class Transform:
 
         return {str(i): params_array[i] for i in range(params_array.size)}
 
-        return {
-            jax.tree_util.keystr(loc): val
-            for loc, val in jax.tree_util.tree_leaves_with_path(params_list)
-            }
-
     def params_dict_to_list(self, params_dict):
 
         return self.params_array_to_list(
