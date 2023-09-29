@@ -503,11 +503,11 @@ def trainer(
            epoch_reduce = 0
 
     epoch_loop = range(1, epochs + 1)
-    if not verbose:
-        epoch_loop = tqdm(epoch_loop)
+    if verbose:
+        epoch_loop = tqdm(epoch_loop, position=0)
     for epoch in epoch_loop:
-        if verbose:
-            print(f'Epoch {epoch}')
+        # if verbose:
+        #     print(f'Epoch {epoch}')
         
         # Training
         model = model.train()
@@ -539,7 +539,7 @@ def trainer(
         else:
             loop = inputs_train
         if verbose:
-            loop = tqdm(loop, total=n, desc='Train batch', leave=False)
+            loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
             
         loss_train = 0
         for batch in loop:
@@ -576,7 +576,7 @@ def trainer(
                 else:
                     loop = inputs_valid
                 if verbose:
-                    loop = tqdm(loop, total=n, desc='Valid batch', leave=False)
+                    loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
                     
                 loss_valid = 0
                 for batch in loop:
@@ -603,18 +603,18 @@ def trainer(
             print('nan/inf loss, stopping')
             break
             
-        if verbose:
-            print(loss_train, end='')
-            if validate:
-                print(f', {loss_valid}', end='')
-            print()
+        # if verbose:
+        #     print(loss_train, end='')
+        #     if validate:
+        #         print(f', {loss_valid}', end='')
+        #     print()
             
         if save is not None:
             np.save(f'{save}.npy', losses, allow_pickle=True)
             
         if loss_track < best_loss:
-            if verbose:
-                print('Loss improved')
+            # if verbose:
+            #     print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
@@ -637,8 +637,8 @@ def trainer(
                     print(f'No improvement for {stop} epochs, stopping')
                 break
 
-        if verbose:
-            print()
+        # if verbose:
+        #     print()
                 
     if verbose and save:
         print(save)
