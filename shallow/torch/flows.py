@@ -539,7 +539,7 @@ def trainer(
         else:
             loop = inputs_train
         if verbose:
-            loop = tqdm(loop, total=n, desc='Train batch', leave=True)
+            loop = tqdm(loop, total=n, desc='Train batch', leave=False)
             
         loss_train = 0
         for batch in loop:
@@ -576,7 +576,7 @@ def trainer(
                 else:
                     loop = inputs_valid
                 if verbose:
-                    loop = tqdm(loop, total=n, desc='Valid batch', leave=True)
+                    loop = tqdm(loop, total=n, desc='Valid batch', leave=False)
                     
                 loss_valid = 0
                 for batch in loop:
