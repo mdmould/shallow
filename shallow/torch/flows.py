@@ -503,8 +503,8 @@ def trainer(
            epoch_reduce = 0
 
     epoch_loop = range(1, epochs + 1)
-    if verbose:
-        epoch_loop = tqdm(epoch_loop, position=0)
+    # if verbose:
+    epoch_loop = tqdm(epoch_loop, position=0)
     for epoch in epoch_loop:
         # if verbose:
         #     print(f'Epoch {epoch}')
