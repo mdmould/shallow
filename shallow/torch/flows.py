@@ -57,7 +57,7 @@ class FeaturewiseTransform(Transform):
     
         super().__init__()
 
-        self.transforms = nn.ModuleList(transforms)
+        self.transforms = torch.nn.ModuleList(transforms)
         self.forwards = [t.forward for t in self.transforms]
         self.inverses = [t.inverse for t in self.transforms]
         
