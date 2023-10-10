@@ -7,5 +7,5 @@ And now `jax` and `numpyro`.
 
 `pip install shallow`
 
-`pip install git+https://github.com/bayesiains/nflows@master`
+`pip install git+https://github.com/mdmould/nflows`
 
