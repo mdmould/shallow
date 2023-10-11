@@ -1,2 +1,2 @@
-pip install git+https://github.com/mdmould/nflows
+git+https://github.com/mdmould/nflows
 
