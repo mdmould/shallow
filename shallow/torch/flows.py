@@ -31,6 +31,7 @@ from nflows.utils import(
 from .utils import cpu, device, get_activation, get_optimizer, shift_and_scale
 from .nets import NormModule, ForwardNetwork, ResidualNetwork
 from .training import Trainer ## TODO
+from .plot import plot_loss
 
 
 class NormTransform(AffineTransform):
@@ -413,6 +414,7 @@ def trainer(
     verbose=True,
     save=None,
     seed=None,
+    print_to_file=False,
     ):
     
     if seed is not None:
@@ -539,7 +541,10 @@ def trainer(
         else:
             loop = inputs_train
         if verbose:
-            loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
+            if print_to_file:
+                loop = tqdm(loop, total=n, desc='Train batch')
+            else:
+                loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
             
         loss_train = 0
         for batch in loop:
@@ -576,7 +581,10 @@ def trainer(
                 else:
                     loop = inputs_valid
                 if verbose:
-                    loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
+                    if print_to_file:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1)
+                    else:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
                     
                 loss_valid = 0
                 for batch in loop:
@@ -603,18 +611,11 @@ def trainer(
             print('nan/inf loss, stopping')
             break
             
-        # if verbose:
-        #     print(loss_train, end='')
-        #     if validate:
-        #         print(f', {loss_valid}', end='')
-        #     print()
-            
         if save is not None:
             np.save(f'{save}.npy', losses, allow_pickle=True)
+            plot_loss(losses, fname=f'{save}.png')
             
         if loss_track < best_loss:
-            # if verbose:
-            #     print('Loss improved')
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
@@ -636,9 +637,6 @@ def trainer(
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
-
-        # if verbose:
-        #     print()
                 
     if verbose and save:
         print(save)

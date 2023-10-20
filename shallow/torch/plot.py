@@ -1,9 +1,10 @@
 import torch
 import corner
+import numpy as np
 import matplotlib.pyplot as plt
 
 def plot_loss(losses, fname=None, loss_name='KL Divergence', **kwargs):
-    """ plot training and validation loss as a function of epoch """
+    """ Plot training and validation loss as a function of epoch. """
 
     fig, ax = plt.subplots(**kwargs)
     ax.set_xlabel('Epoch')
@@ -17,8 +18,9 @@ def plot_loss(losses, fname=None, loss_name='KL Divergence', **kwargs):
     for key, loss in losses.items():
         ax.plot(range(nepochs), loss, label=key.capitalize())
 
+    plt.grid(True)
     ax.legend()
-
+    
     if fname is not None:
         fig.savefig(fname)
 
