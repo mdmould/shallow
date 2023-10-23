@@ -1,7 +1,12 @@
-import torch
 import corner
 import numpy as np
 import matplotlib.pyplot as plt
+
+try:
+    import torch
+    torch_installed = True
+except:
+    torch_installed = False
 
 def plot_loss(losses, fname=None, loss_name='KL Divergence', **kwargs):
     """ Plot training and validation loss as a function of epoch. """
@@ -29,7 +34,7 @@ def plot_loss(losses, fname=None, loss_name='KL Divergence', **kwargs):
 def plot_corner_bilby(xs, fname=None, **kwargs):
     """ Make corner plots, bilby-style. """
     
-    if isinstance(xs, torch.Tensor):
+    if torch_installed and isinstance(xs, torch.Tensor):
         xs = xs.cpu().detach().numpy().squeeze()
     
     defaults_kwargs = dict(
@@ -46,7 +51,7 @@ def plot_corner_bilby(xs, fname=None, **kwargs):
     )
     defaults_kwargs.update(kwargs)
 
-    if isinstance(defaults_kwargs['truths'], torch.Tensor):
+    if torch_installed and isinstance(defaults_kwargs['truths'], torch.Tensor):
         defaults_kwargs['truths'] = defaults_kwargs['truths'].cpu().detach().numpy().squeeze()
 
     fig = corner.corner(xs, **defaults_kwargs)
