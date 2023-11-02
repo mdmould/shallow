@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
@@ -193,6 +194,80 @@ def trainer(
     key,
     flow,
     x,
+    valid=None, ## TODO
+    batch_size=None,
+    max_epochs=1,
+    patience=None,
+    lr=1e-3,
+    opt=None,
+    loss_fn=None,
+    print_batch=False,
+    print_epoch=True,
+    ):
+
+    nx = x.shape[0]
+    if batch_size is None:
+        batch_size = nx
+    splits = jnp.arange(batch_size, nx, batch_size)
+    nbatches = len(splits) + 1
+
+    params, static = equinox.partition(flow, equinox.is_inexact_array)
+    if loss_fn is None:
+        get_flow = lambda params: equinox.combine(static, params)
+        loss_fn = lambda params, x: get_flow(params).log_prob(x).mean()
+    loss_and_grad = jax.value_and_grad(loss_fn)
+
+    if opt is None:
+        opt = optax.adam(lr)
+    state = opt.init(params)
+
+    def step(params, state, x):
+        loss, grad = loss_and_grad(params, x)
+        updates, state = opt.update(grad, state)
+        params = equinox.apply_updates(params, updates)
+        return params, state, loss
+
+    def get_batches(key):
+        key, key_ = jax.random.split(key)
+        xs = jax.random.permutation(key_, x)
+        xs = jnp.array_split(x, slpits)
+        return key, xs
+
+    epoch_loop = range(max_epochs)
+    if print_epoch:
+        miniters = 1 if print_epoch is True else print_epoch
+        loop_epoch = tqdm(epoch_loop, desc='epoch', miniters=miniters)
+
+    losses = []
+    for epoch in loop_epoch:
+        key, xs = get_batches(key)
+        loop_batch = xs
+        if print_batch:
+            miniters = 1 if print_batch is True else print_batch
+            loop_batch = tqdm(loop_batch, desc='batch', miniters=miniters)
+
+        loss = 0
+        for x in loop_batch:
+            params, state, lossx = step(params, state, x)
+            loss += lossx
+        loss /= nbatches
+        losses.append(loss)
+
+        if loss == min(losses):
+            best_epoch = epoch
+            best_params = params
+        if epoch - best_epoch > patience:
+            break
+
+    flow = equinox.combine(static, best_params)
+
+    return key, flow, losses
+
+
+def _trainer_scan(
+    key,
+    flow,
+    x,
     valid=None,
     batch_size=100,
     max_epochs=100,
@@ -217,8 +292,8 @@ def trainer(
 
     def train_batch(carry, x):
         params, state = carry
-        loss, grads = loss_and_grad(params, x)
-        updates, state = opt.update(grads, state)
+        loss, grad = loss_and_grad(params, x)
+        updates, state = opt.update(grad, state)
         params = optax.apply_updates(params, updates)
         return (params, state), loss
 
