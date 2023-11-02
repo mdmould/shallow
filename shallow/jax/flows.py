@@ -550,7 +550,7 @@ def _trainer_scan_epoch_with_patience(
     def cond_patience(carry, epoch):
         key, params, state, best = carry
         best_epoch, best_loss, best_params = best
-        pred = epoch - best_epoch > patience
+        pred = epoch > best_epoch + patience - 1
         true_fn = lambda carry, epoch: (carry, jnp.nan)
         def false_fn(carry, epoch):
             key, params, state, best = carry
@@ -564,7 +564,7 @@ def _trainer_scan_epoch_with_patience(
         cond_patience, (key, params, state, best), jnp.arange(max_epochs),
         )
     best_epoch, best_loss, best_params = best
-    losses = losses#[:best_epoch+patience]
+    losses = losses[:best_epoch+patience]
 
     return key, best_params, losses
 
