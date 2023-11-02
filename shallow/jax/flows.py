@@ -1,5 +1,5 @@
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import jax
 import jax.numpy as jnp
@@ -137,6 +137,17 @@ class BoundedFlow(Transformed):
         super().__init__(flow.base_dist, Chain([flow.bijection, bounder]))
 
 
+def bounded_flow(flow, bounds=[None], norms=None):
+    bounder = Stack([get_bounder(bound) for bound in bounds])
+    if norms is not None:
+        debounded_norms = jax.vmap(bounder.inverse)(norms)
+        denormer = Invert(get_normer(debounded_norms))
+        bounder = Chain([denormer, bounder])
+    base_dist = flow.base_dist
+    bijection = Chain([flow.bijection, bounder])
+    return Transformed(base_dist, bijection)
+
+
 def flow_to_array(flow):
     params, static = equinox.partition(flow, equinox.is_inexact_array)
     arrays, unflatten = jax.tree_util.tree_flatten(params)
@@ -190,6 +201,10 @@ def numerical_sampling(flow, key, shape, solver=None):
     return x
 
 
+def cross_entropy(static, params, x):
+    return -equinox.combine(static, params).log_prob(x).mean()
+
+
 def trainer(
     key,
     flow,
@@ -208,47 +223,125 @@ def trainer(
     nx = x.shape[0]
     if batch_size is None:
         batch_size = nx
-    splits = jnp.arange(batch_size, nx, batch_size)
-    nbatches = len(splits) + 1
+        print_batch = False
+    nbatch, remainder = divmod(nx, batch_size)
+    nbatch += int(remainder > 0)
+
+    if patience is not None:
+        if type(patience) is float:
+            assert 0 < patience < 1
+            patience = max(int(patience * max_epochs), 1)
+        else:
+            assert type(patience is int)
+            assert 0 < patience < max_epochs
 
     params, static = equinox.partition(flow, equinox.is_inexact_array)
-    if loss_fn is None:
-        get_flow = lambda params: equinox.combine(static, params)
-        loss_fn = lambda params, x: get_flow(params).log_prob(x).mean()
-    loss_and_grad = jax.value_and_grad(loss_fn)
 
     if opt is None:
         opt = optax.adam(lr)
     state = opt.init(params)
+    
+    if loss_fn is None:
+        loss_fn = lambda params, x: cross_entropy(static, params, x)
 
-    def step(params, state, x):
-        loss, grad = loss_and_grad(params, x)
+    prints = []
+    for print_, size in zip(
+        (print_batch, print_epoch), (nbatch, max_epochs),
+        ):
+        if print_:
+            if print_ is True:
+                print_ = 1
+            elif type(print_) is float:
+                assert 0 < print_ < 1
+                print_ = max(int(size * print_), 1)
+            else:
+                assert type(print_) is int
+                assert 0 < print_ < size
+        prints.append(print_)
+    print_batch, print_epoch = prints
+
+    args = (
+        key,
+        static,
+        params,
+        x,
+        valid,
+        batch_size,
+        max_epochs,
+        patience,
+        opt,
+        state,
+        loss_fn,
+        print_batch,
+        print_epoch,
+        )
+    if remainder == 0:
+        if patience is None:
+            print('scanning batches and epochs')
+            key, best_params, losses = _trainer_scan_epoch(*args)
+        else:
+            print('scanning batches, looping epochs')
+            # key, best_params, losses = _trainer_scan_batch(*args)
+            key, best_params, losses = _trainer_scan_epoch_with_patience(*args)
+    else:
+        print('looping batches and epochs')
+        key, best_params, losses = _trainer_loop(*args)
+    flow = equinox.combine(static, best_params)
+
+    return key, flow, losses
+
+
+
+def _trainer_loop(
+    key,
+    static,
+    params,
+    x,
+    valid,
+    batch_size,
+    max_epochs,
+    patience,
+    opt,
+    state,
+    loss_fn,
+    print_batch,
+    print_epoch,
+    ):
+
+    splits = jnp.arange(batch_size, x.shape[0], batch_size)
+    nbatches = len(splits) + 1
+
+    @jax.jit
+    def step(params, state, batch):
+        loss, grad = jax.value_and_grad(loss_fn)(params, batch)
         updates, state = opt.update(grad, state)
         params = equinox.apply_updates(params, updates)
         return params, state, loss
 
-    def get_batches(key):
-        key, key_ = jax.random.split(key)
-        xs = jax.random.permutation(key_, x)
-        xs = jnp.array_split(x, slpits)
-        return key, xs
-
-    epoch_loop = range(max_epochs)
+    loop_epoch = range(max_epochs)
     if print_epoch:
-        miniters = 1 if print_epoch is True else print_epoch
-        loop_epoch = tqdm(epoch_loop, desc='epoch', miniters=miniters)
+        loop_epoch = tqdm(
+            loop_epoch, desc='epoch', miniters=print_epoch, position=0,
+            )
 
     losses = []
     for epoch in loop_epoch:
-        key, xs = get_batches(key)
-        loop_batch = xs
+        key, key_ = jax.random.split(key)
+        batches = jnp.array_split(jax.random.permutation(key_, x), splits)
+        
+        loop_batch = batches
         if print_batch:
-            miniters = 1 if print_batch is True else print_batch
-            loop_batch = tqdm(loop_batch, desc='batch', miniters=miniters)
+            loop_batch = tqdm(
+                loop_batch,
+                desc='batch',
+                miniters=print_batch,
+                position=1,
+                # leave=False,
+                )
 
         loss = 0
-        for x in loop_batch:
-            params, state, lossx = step(params, state, x)
+        for batch in loop_batch:
+            params, state, lossx = step(params, state, batch)
             loss += lossx
         loss /= nbatches
         losses.append(loss)
@@ -256,53 +349,178 @@ def trainer(
         if loss == min(losses):
             best_epoch = epoch
             best_params = params
-        if epoch - best_epoch > patience:
-            break
 
-    flow = equinox.combine(static, best_params)
+        if patience is not None:
+            if epoch - best_epoch > patience:
+                break
 
-    return key, flow, losses
+    return key, best_params, jnp.array(losses)
 
 
-def _trainer_scan(
+def _trainer_scan_batch(
     key,
-    flow,
+    static,
+    params,
     x,
-    valid=None,
-    batch_size=100,
-    max_epochs=100,
-    patience=10,
-    lr=1e-3,
-    opt=None,
-    loss_fn=None,
-    print_batch=False,
-    print_epoch=True,
+    valid,
+    batch_size,
+    max_epochs,
+    patience,
+    opt,
+    state,
+    loss_fn,
+    print_batch,
+    print_epoch,
     ):
 
-    nx = x.shape[0]
-    
-    params, static = equinox.partition(flow, equinox.is_inexact_array)
-    if loss_fn is None:
-        loss_fn = lambda params, x: -equinox.combine(static, params).log_prob(x).mean()
-    loss_and_grad = jax.value_and_grad(loss_fn)
+    nbatch = x.shape[0] // batch_size
+    ndim = x.shape[1]
 
-    if opt is None:
-        opt = optax.adam(lr)
-    state = opt.init(params)
-
-    def train_batch(carry, x):
+    def train_batch(carry, idx_batch):
         params, state = carry
-        loss, grad = loss_and_grad(params, x)
+        idx, batch = idx_batch
+        loss, grad = jax.value_and_grad(loss_fn)(params, batch)
         updates, state = opt.update(grad, state)
-        params = optax.apply_updates(params, updates)
+        params = equinox.apply_updates(params, updates)
         return (params, state), loss
 
-    def get_batches(key):
+    if print_batch:
+        train_batch = jax_tqdm.scan_tqdm(
+            nbatch, print_rate=print_batch, message='batch',
+            )(train_batch)
+
+    @jax.jit
+    def train_epoch(key, params, state):
         key, key_ = jax.random.split(key)
-        xs = jax.random.permutation(key_, x)
-        splits = jnp.arange(batch_size, nx, batch_size)
-        xs = jnp.array_split(xs, splits)
-        return key, xs
+        batches = jnp.reshape(
+            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            )
+        (params, state), losses = jax.lax.scan(
+            train_batch, (params, state), (jnp.arange(nbatch), batches),
+            )
+        loss = losses.mean()
+        return key, params, state, loss
+
+    loop_epoch = range(max_epochs)
+    if print_epoch:
+        loop_epoch = tqdm(
+            loop_epoch, desc='epoch', miniters=print_epoch, position=0,
+            )
+
+    losses = []
+    for epoch in loop_epoch:
+        key, params, state, loss = train_epoch(key, params, state)
+        losses.append(loss)
+        
+        if loss == min(losses):
+            best_epoch = epoch
+            best_params = params
+            
+        if patience is not None:
+            if epoch - best_epoch > patience:
+                break
+
+    return key, best_params, jnp.array(losses)
+    
+
+def _trainer_scan_epoch(
+    key,
+    static,
+    params,
+    x,
+    valid,
+    batch_size,
+    max_epochs,
+    patience,
+    opt,
+    state,
+    loss_fn,
+    print_batch,
+    print_epoch,
+    ):
+
+    nbatch = x.shape[0] // batch_size
+    ndim = x.shape[1]
+
+    def train_batch(carry, idx_batch):
+        params, state = carry
+        idx, batch = idx_batch
+        loss, grad = jax.value_and_grad(loss_fn)(params, batch)
+        updates, state = opt.update(grad, state)
+        params = equinox.apply_updates(params, updates)
+        return (params, state), loss
+
+    if print_batch:
+        train_batch = jax_tqdm.scan_tqdm(
+            nbatch, print_rate=print_batch, message='batch',
+            )(train_batch)
+
+    def cond_loss(current, best):
+        params, loss = current
+        best_params, best_loss = best
+        pred = loss < best_loss
+        true_fn = lambda: current
+        false_fn = lambda: best
+        return jax.lax.cond(pred, true_fn, false_fn)
+
+    def train_epoch(carry, epoch):
+        key, params, state, best = carry
+        key, key_ = jax.random.split(key)
+        batches = jnp.reshape(
+            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            )
+        (params, state), losses = jax.lax.scan(
+            train_batch, (params, state), (jnp.arange(nbatch), batches),
+            )
+        loss = losses.mean()
+        best = cond_loss((params, loss), best)
+        return (key, params, state, best), loss
+
+    if print_epoch:
+        train_epoch = jax_tqdm.scan_tqdm(
+            max_epochs, print_rate=print_epoch, message='epoch',
+            )(train_epoch)
+
+    best = params, jnp.inf
+    (key, params, state, best), losses = jax.lax.scan(
+        train_epoch, (key, params, state, best), jnp.arange(max_epochs),
+        )
+    best_params, best_loss = best
+
+    return key, best_params, losses
+
+
+def _trainer_scan_epoch_with_patience(
+    key,
+    static,
+    params,
+    x,
+    valid,
+    batch_size,
+    max_epochs,
+    patience,
+    opt,
+    state,
+    loss_fn,
+    print_batch,
+    print_epoch,
+    ):
+
+    nbatch = x.shape[0] // batch_size
+    ndim = x.shape[1]
+
+    def train_batch(carry, idx_batch):
+        params, state = carry
+        idx, batch = idx_batch
+        loss, grad = jax.value_and_grad(loss_fn)(params, batch)
+        updates, state = opt.update(grad, state)
+        params = equinox.apply_updates(params, updates)
+        return (params, state), loss
+
+    if print_batch:
+        train_batch = jax_tqdm.scan_tqdm(
+            nbatch, print_rate=print_batch, message='batch',
+            )(train_batch)
 
     def cond_loss(current, best):
         epoch, loss, params = current
@@ -311,72 +529,42 @@ def _trainer_scan(
         true_fn = lambda: current
         false_fn = lambda: best
         return jax.lax.cond(pred, true_fn, false_fn)
-
-    def train_epoch(key, params, state):
-        init = params, state
-        # key, xs = get_batches(key)
+        
+    def train_epoch(carry, epoch):
+        key, params, state = carry
         key, key_ = jax.random.split(key)
-        xs = jax.random.permutation(key_, x)
-        # splits = jnp.arange(batch_size, nx, batch_size)
-        splits = list(range(batch_size, nx, batch_size))
-        xs = jnp.array_split(xs, splits)
-        (params, state), losses = jax.lax.scan(train_batch, init, xs)
+        batches = jnp.reshape(
+            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            )
+        (params, state), losses = jax.lax.scan(
+            train_batch, (params, state), (jnp.arange(nbatch), batches),
+            )
         loss = losses.mean()
-        return key, params, state, loss
+        return (key, params, state), loss
+
+    if print_epoch:
+        train_epoch = jax_tqdm.scan_tqdm(
+            max_epochs, print_rate=print_epoch, message='epoch',
+            )(train_epoch)
 
     def cond_patience(carry, epoch):
         key, params, state, best = carry
         best_epoch, best_loss, best_params = best
         pred = epoch - best_epoch > patience
-        true_fn = lambda carry: (carry, jnp.nan)
-        def false_fn(carry):
+        true_fn = lambda carry, epoch: (carry, jnp.nan)
+        def false_fn(carry, epoch):
             key, params, state, best = carry
-            key, params, state, loss = train_epoch(key, params, state)
-            current = epoch, loss, params
-            best = cond_loss(current, best)
+            (key, params, state), loss = train_epoch((key, params, state), epoch)
+            best = cond_loss((epoch, loss, params), best)
             return (key, params, state, best), loss
-        return jax.lax.cond(pred, true_fn, false_fn, carry)
+        return jax.lax.cond(pred, true_fn, false_fn, carry, epoch)
 
-    if print_batch:
-        batches = sum(divmod(nx, batch_size))
-        if print_batch is True:
-            print_batch = sum(divmod(batches, 10))
-        train_batch = jax_tqdm.scan_tqdm(
-            batches, print_rate=print_batch, message='batch',
-            )(train_batch)
-
-    if print_epoch:
-        if print_epoch is True:
-            print_epoch = sum(divmod(max_epochs, 10))
-        train_epoch = jax_tqdm.scan_tqdm(
-            max_epochs, print_rate=print_batch, message='epoch',
-            )(train_epoch)
-
-    best_epoch = 0
-    best_loss = jnp.inf
-    best_params = params
-    best = best_epoch, best_loss, best_params
-
-    scan_fn = cond_patience #if patience is not None else train_epoch
-    init = key, params, state, best
-    epochs = jnp.arange(max_epochs)
-    carry, losses = jax.lax.scan(scan_fn, init, epochs)
-
-    key, params, state, best = carry
+    best = 0, jnp.inf, params
+    (key, params, state, best), losses = jax.lax.scan(
+        cond_patience, (key, params, state, best), jnp.arange(max_epochs),
+        )
     best_epoch, best_loss, best_params = best
-    losses = losses[:best_epoch + patience]
-    flow = equinox.combine(static, best_params)
+    losses = losses#[:best_epoch+patience]
 
-    return key, flow, losses
-    
-    
-
-
-
-
-
-
-
-
-    
+    return key, best_params, losses
 
