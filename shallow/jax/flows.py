@@ -28,12 +28,6 @@ from flowjax.flows import (
     MaskedAutoregressiveFlow,
     )
 
-from typing import ClassVar
-from jax import Array
-from jax.typing import ArrayLike
-from flowjax.bijections.bijection import Bijection
-from flowjax.utils import arraylike_to_array
-
 
 # flow wrapper
 # - bounding transform
@@ -45,59 +39,52 @@ from flowjax.utils import arraylike_to_array
 
 
 # modify flowjax.bijections.Affine to accept any non-zero scale
-class FixedAffine(Bijection):
-    """Elementwise affine transformation ``y = a*x + b``."""
+from typing import ClassVar
+from jax import Array
+from jax.typing import ArrayLike
+from flowjax.bijections import Bijection
+from flowjax.utils import arraylike_to_array
 
-    shape: tuple[int, ...]
-    cond_shape: ClassVar[None] = None
-    loc: Array = equinox.field(static=True)
-    _scale: Array = equinox.field(static=True)
+class Affine(Bijection):
+    loc: Array
+    scale: Array
 
     def __init__(
         self,
         loc: ArrayLike = 0,
         scale: ArrayLike = 1,
-    ):
-        """Initilaizes an affine transformation.
-
-        ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
-
-        Args:
-            loc (ArrayLike): Location parameter. Defaults to 0.
-            scale (ArrayLike): Scale parameter. Defaults to 1.
-        """
-        loc, scale = (arraylike_to_array(a, dtype=float) for a in (loc, scale))
+        positivity_constraint: Bijection | None = None,
+        ):
+        loc, scale = [arraylike_to_array(a, dtype=float) for a in (loc, scale)]
         self.shape = jnp.broadcast_shapes(loc.shape, scale.shape)
+        self.cond_shape = None
+
         self.loc = jnp.broadcast_to(loc, self.shape)
-        self._scale = jnp.broadcast_to(scale, self.shape)
-        assert jnp.all(self._scale != 0)
+        self.scale = jnp.broadcast_to(scale, self.shape)
 
     def transform(self, x, condition=None):
         x, _ = self._argcheck_and_cast(x)
-        return x * self._scale + self.loc
+        return x * self.scale + self.loc
 
     def transform_and_log_det(self, x, condition=None):
         x, _ = self._argcheck_and_cast(x)
-        scale = self._scale
-        return x * scale + self.loc, jnp.log(jnp.abs(scale)).sum()
+        scale = self.scale
+        return x * scale + self.loc, jnp.log(jnp.abs(self.scale)).sum()
 
     def inverse(self, y, condition=None):
         y, _ = self._argcheck_and_cast(y)
-        return (y - self.loc) / self._scale
+        return (y - self.loc) / self.scale
 
     def inverse_and_log_det(self, y, condition=None):
         y, _ = self._argcheck_and_cast(y)
-        scale = self._scale
-        return (y - self.loc) / scale, -jnp.log(jnp.abs(scale)).sum()
-
-
-FixedAffine = Affine
+        scale = self.scale
+        return (y - self.loc) / scale, -jnp.log(jnp.abs(self.scale)).sum()
 
 
 def get_bounder(bounds):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
-        bijection = FixedAffine(0, 1)
+        bijection = Affine(0, 1)
     # one sided bounds
     elif any(bound is None for bound in bounds):
         # right side bounded
@@ -108,13 +95,13 @@ def get_bounder(bounds):
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        bijection = Chain([SoftPlus(), FixedAffine(loc, scale)])
+        bijection = Chain([SoftPlus(), Affine(loc, scale)])
     # two sided bounds
     else:
         loc = bounds[0]
         scale = bounds[1] - bounds[0]
         bijection = Chain(
-            [Tanh(), FixedAffine(0.5, 0.5), FixedAffine(loc, scale)],
+            [Tanh(), Affine(0.5, 0.5), Affine(loc, scale)],
             )
     return bijection
 
@@ -124,24 +111,10 @@ def get_normer(norms):
     std = jnp.std(norms, axis=0)
     loc = - mean / std
     scale = 1 / std
-    return FixedAffine(loc, scale)
+    return Affine(loc, scale)
 
 
-class BoundedFlow(Transformed):
-    bounder: Bijection
-    def __init__(self, flow, bounds=[None], norms=None):
-        bounder = Stack([get_bounder(bound) for bound in bounds])
-        if norms is not None:
-            debounded_norms = jax.vmap(bounder.inverse)(norms)
-            denormer = Invert(get_normer(debounded_norms))
-            bounder = Chain([denormer, bounder])
-        self.bounder = bounder
-        base_dist = flow.base_dist
-        bijection = Chain([flow.bijection, self.bounder])
-        super().__init__(base_dist, bijection)
-
-
-def bounded_flow(flow, bounds=[None], norms=None):
+def get_flow(flow, bounds=[None], norms=None):
     bounder = Stack([get_bounder(bound) for bound in bounds])
     if norms is not None:
         debounded_norms = jax.vmap(bounder.inverse)(norms)
@@ -152,28 +125,37 @@ def bounded_flow(flow, bounds=[None], norms=None):
     return Transformed(base_dist, bijection)
 
 
-def flow_to_array(flow):
-    params, static = equinox.partition(flow, equinox.is_inexact_array)
+def get_filter(flow):
+    params = jax.tree_util.tree_map(equinox.is_inexact_array, flow)
+    filter_spec = equinox.tree_at(
+        lambda tree: tree.bijection[-1], params, replace=False,
+        )
+    return filter_spec
+
+
+def params_to_array(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
     array = jnp.concatenate([a.flatten() for a in arrays])
     return array
 
 
-def get_array_to_flow(flow):
-    params, static = equinox.partition(flow, equinox.is_inexact_array)
+def count_params(params):
+    return params_to_array(params).size
+
+
+def get_array_to_params(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
     # shapes = [a.shape for a in arrays]
     shapes = list(map(jnp.shape, arrays))
     # lens = [np.prod(shape) for shape in shapes]
     lens = list(map(np.prod, shapes))
     idxs = np.cumsum(lens)[:-1]
-    def array_to_flow(array):
+    def array_to_params(array):
         flat_arrays = jnp.split(array, idxs)
         arrays = [a.reshape(shape) for a, shape in zip(flat_arrays, shapes)]
         params = jax.tree_util.tree_unflatten(unflatten, arrays)
-        flow = equinox.combine(static, params)
-        return flow
-    return array_to_flow
+        return params
+    return array_to_params
 
 
 ## TODO: make this work
@@ -207,8 +189,8 @@ def numerical_sampling(flow, key, shape, solver=None):
     return x
 
 
-def cross_entropy(static, params, x):
-    return -equinox.combine(static, params).log_prob(x).mean()
+def cross_entropy(x, params, static):
+    return -equinox.combine(params, static).log_prob(x).mean()
 
 
 def trainer(
@@ -224,7 +206,10 @@ def trainer(
     loss_fn=None,
     print_batch=False,
     print_epoch=True,
+    filter_spec=equinox.is_inexact_array,
     ):
+    
+    params, static = equinox.partition(flow, filter_spec)
 
     nx = x.shape[0]
     if batch_size is None:
@@ -241,14 +226,12 @@ def trainer(
             assert type(patience is int)
             assert 0 < patience < max_epochs
 
-    params, static = equinox.partition(flow, equinox.is_inexact_array)
-
     if opt is None:
         opt = optax.adam(lr)
     state = opt.init(params)
     
     if loss_fn is None:
-        loss_fn = lambda params, x: cross_entropy(static, params, x)
+        loss_fn = lambda params, x: cross_entropy(x, params, static)
 
     prints = []
     for print_, size in zip(
@@ -292,7 +275,7 @@ def trainer(
     else:
         print('looping batches and epochs')
         key, best_params, losses = _trainer_loop(*args)
-    flow = equinox.combine(static, best_params)
+    flow = equinox.combine(best_params, static)
 
     return key, flow, losses
 
