@@ -91,7 +91,7 @@ class FixedAffine(Bijection):
         return (y - self.loc) / scale, -jnp.log(jnp.abs(scale)).sum()
 
 
-# FixedAffine = Affine
+FixedAffine = Affine
 
 
 def get_bounder(bounds):
@@ -128,13 +128,17 @@ def get_normer(norms):
 
 
 class BoundedFlow(Transformed):
+    bounder: Bijection
     def __init__(self, flow, bounds=[None], norms=None):
         bounder = Stack([get_bounder(bound) for bound in bounds])
         if norms is not None:
             debounded_norms = jax.vmap(bounder.inverse)(norms)
             denormer = Invert(get_normer(debounded_norms))
             bounder = Chain([denormer, bounder])
-        super().__init__(flow.base_dist, Chain([flow.bijection, bounder]))
+        self.bounder = bounder
+        base_dist = flow.base_dist
+        bijection = Chain([flow.bijection, self.bounder])
+        super().__init__(base_dist, bijection)
 
 
 def bounded_flow(flow, bounds=[None], norms=None):
@@ -158,8 +162,10 @@ def flow_to_array(flow):
 def get_array_to_flow(flow):
     params, static = equinox.partition(flow, equinox.is_inexact_array)
     arrays, unflatten = jax.tree_util.tree_flatten(params)
-    shapes = [a.shape for a in arrays]
-    lens = [np.prod(shape) for shape in shapes]
+    # shapes = [a.shape for a in arrays]
+    shapes = list(map(jnp.shape, arrays))
+    # lens = [np.prod(shape) for shape in shapes]
+    lens = list(map(np.prod, shapes))
     idxs = np.cumsum(lens)[:-1]
     def array_to_flow(array):
         flat_arrays = jnp.split(array, idxs)
