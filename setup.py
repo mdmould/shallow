@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 name = 'shallow'
-version = '0.1.4' # current 0.1.4
+version = '0.2' # current 0.1.4
 
 with open('README.md' ,'r') as f:
     long_description = f.read().strip()
@@ -23,9 +23,13 @@ setup(
         'torch',
         # 'nflows',
         # 'tensorflow',
-        'jax',
         'numpyro',
+        'jax',
         'optax',
+        'equinox',
+        'flowjax',
+        'optimistix',
+        'jax_tqdm',
         ],
     python_requires='>=3.7',
     )
