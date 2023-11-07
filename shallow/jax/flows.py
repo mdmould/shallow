@@ -97,6 +97,7 @@ def get_bounder(bounds):
             scale = 1
         bijection = Chain([SoftPlus(), Affine(loc, scale)])
     # two sided bounds
+    ## TODO: try normal CDF instead
     else:
         loc = bounds[0]
         scale = bounds[1] - bounds[0]
@@ -381,7 +382,8 @@ def _trainer_scan_batch(
     def train_epoch(key, params, state):
         key, key_ = jax.random.split(key)
         batches = jnp.reshape(
-            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            jax.random.permutation(key_, x),
+            (nbatch, batch_size, *x.shape[1:]),
             )
         (params, state), losses = jax.lax.scan(
             train_batch, (params, state), (jnp.arange(nbatch), batches),
@@ -455,7 +457,8 @@ def _trainer_scan_epoch_with_patience(
         key, params, state = carry
         key, key_ = jax.random.split(key)
         batches = jnp.reshape(
-            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            jax.random.permutation(key_, x),
+            (nbatch, batch_size, *x.shape[1:]),
             )
         (params, state), losses = jax.lax.scan(
             train_batch, (params, state), (jnp.arange(nbatch), batches),
@@ -534,7 +537,8 @@ def _trainer_scan_epoch(
         key, params, state, best = carry
         key, key_ = jax.random.split(key)
         batches = jnp.reshape(
-            jax.random.permutation(key_, x), (nbatch, batch_size, ndim),
+            jax.random.permutation(key_, x),
+            (nbatch, batch_size, *x.shape[1:]),
             )
         (params, state), losses = jax.lax.scan(
             train_batch, (params, state), (jnp.arange(nbatch), batches),
