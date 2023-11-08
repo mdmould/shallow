@@ -240,6 +240,7 @@ def trainer(
                 assert 0 < print_ < size
         prints.append(print_)
     print_batch, print_epoch = prints
+    tqdm._instances.clear()
 
     args = (
         key,
