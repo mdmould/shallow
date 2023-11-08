@@ -29,15 +29,6 @@ from flowjax.flows import (
     )
 
 
-# flow wrapper
-# - bounding transform
-# - params pytree to array
-# - numerical solver for BNAF inverse
-
-# training loop
-# - scan batches and epochs
-
-
 # modify flowjax.bijections.Affine to accept any non-zero scale
 from typing import ClassVar
 from jax import Array
@@ -53,7 +44,6 @@ class Affine(Bijection):
         self,
         loc: ArrayLike = 0,
         scale: ArrayLike = 1,
-        positivity_constraint: Bijection | None = None,
         ):
         loc, scale = [arraylike_to_array(a, dtype=float) for a in (loc, scale)]
         self.shape = jnp.broadcast_shapes(loc.shape, scale.shape)
@@ -115,6 +105,7 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
+## TODO: bounder bijection in case of no bounds
 def get_flow(flow, bounds=[None], norms=None):
     bounder = Stack([get_bounder(bound) for bound in bounds])
     if norms is not None:
@@ -198,7 +189,7 @@ def trainer(
     key,
     flow,
     x,
-    valid=None, ## TODO
+    valid=None, ## TODO: add validation steps
     batch_size=None,
     max_epochs=1,
     patience=None,
