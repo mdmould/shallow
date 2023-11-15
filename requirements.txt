@@ -1,0 +1,11 @@
+tensorflow
+torch
+nflows @ git+https://github.com/bayesiains/nflows.git
+pyro-ppl
+numpyro
+jax
+jax_tqdm
+optax
+equinox
+flowjax
+
