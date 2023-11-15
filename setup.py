@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 name = 'shallow'
-version = '0.2' # current 0.1.4
+version = '0.2'
 
 with open('README.md' ,'r') as f:
     long_description = f.read().strip()
@@ -20,17 +20,17 @@ setup(
     install_requires=[
         'numpy',
         'tqdm',
+        'tensorflow',
         'torch',
-        # 'nflows',
-        # 'tensorflow',
+        'nflows @ git+ssh://git@github.com/bayesiains/nflows.git',
+        'pyro-ppl',
         'numpyro',
         'jax',
         'optax',
         'equinox',
         'flowjax',
-        'optimistix',
         'jax_tqdm',
         ],
-    python_requires='>=3.7',
+    python_requires='>=3.9',
     )
 
