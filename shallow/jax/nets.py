@@ -32,7 +32,7 @@ def trainer(
     params, static = equinox.partition(model, equinox.is_inexact_array)
 
     xt, yt = train
-    nt = x.shape[0]
+    nt = xt.shape[0]
     if batch_size is None:
         batch_size = nt
     nbt, remt = divmod(nt, batch_size)
@@ -119,7 +119,7 @@ def trainer(
             def valid_scan(params, x, y):
                 return batched_loss(params, x, y)
 
-        elif vleftover == 0:
+        elif remv == 0:
 
             def valid_scan(params, x, y):
                 xs = x.reshape(nbv, vbatch_size, *x.shape[1:])
