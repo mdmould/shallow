@@ -10,6 +10,10 @@ def mse(model, x, y):
     return jnp.square(y - model(x)).mean()
 
 
+def mae(model, x, y):
+    return jnp.abs(y - model(x)).mean()
+
+
 ## TODO: make y any dimension
 def trainer(
     key,
@@ -28,10 +32,10 @@ def trainer(
     params, static = equinox.partition(model, equinox.is_inexact_array)
 
     xt, yt = train
-    nt, nd = xt.shape
+    nt = x.shape[0]
     if batch_size is None:
         batch_size = nt
-    nbatch, leftover = divmod(nt, batch_size)
+    nbt, remt = divmod(nt, batch_size)
 
     opt = optax.adamw(learning_rate=lr, weight_decay=wd)
     state = opt.init(params)
@@ -66,24 +70,24 @@ def trainer(
             carry, losses = train_step((params, state), (x, y))
             return *carry, losses
             
-    elif leftover == 0:
+    elif remt == 0:
         
         def train_scan(params, state, x, y):
-            xs = x.reshape(nbatch, batch_size, nd)
-            ys = y.reshape(nbatch, batch_size)
+            xs = x.reshape(nbt, batch_size, *x.shape[1:])
+            ys = y.reshape(nbt, batch_size, *y.shape[1:])
             carry, losses = jax.lax.scan(train_step, (params, state), (xs, ys))
             return *carry, losses
 
     else:
         
         def train_scan(params, state, x, y):
-            xscan = x[:-leftover].reshape(nbatch, batch_size, nd)
-            yscan = y[:-leftover].reshape(nbatch, batch_size)
+            xscan = x[:-remt].reshape(nbt, batch_size, *x.shape[1:])
+            yscan = y[:-remt].reshape(nbt, batch_size, *y.shape[1:])
             carry, losses = jax.lax.scan(
                 train_step, (params, state), (xscan, yscan),
                 )
-            xleft = x[-leftover:]
-            yleft = y[-leftover:]
+            xleft = x[-remt:]
+            yleft = y[-remt:]
             carry, loss = train_step(carry, (xleft, yleft))
             losses = jnp.concatenate([losses, jnp.array([loss])])
             return *carry, losses
@@ -104,13 +108,11 @@ def trainer(
         nanloss = jnp.nan,
 
     else:
-        
+
         xv, yv = valid
         nv = xv.shape[0]
         vbatch_size = batch_size
-        if vbatch_size > nv:
-            vbatch_size = nv
-        nvbatch, vleftover = divmod(nv, vbatch_size)
+        nbv, remv = divmod(nv, vbatch_size)
 
         if nv == vbatch_size:
 
@@ -120,8 +122,8 @@ def trainer(
         elif vleftover == 0:
 
             def valid_scan(params, x, y):
-                xs = x.reshape(nvbatch, vbatch_size, nd)
-                ys = y.reshape(nvbatch, vbatch_size)
+                xs = x.reshape(nbv, vbatch_size, *x.shape[1:])
+                ys = y.reshape(nbv, vbatch_size, *y.shape[1:])
                 return jax.vmap(partial(batched_loss, params))(xs, ys)
                 # return jax.lax.scan(
                 #     lambda carry, xy: (carry, loss_fn(params, *xy)),
@@ -131,16 +133,16 @@ def trainer(
 
         else:
             def valid_scan(params, x, y):
-                xscan = x[:-vleftover].reshape(nvbatch, vbatch_size, nd)
-                yscan = y[:-vleftover].reshape(nvbatch, vbatch_size)
+                xscan = x[:-remv].reshape(nbv, batch_size, *x.shape[1:])
+                yscan = y[:-remv].reshape(nbv, batch_size, *y.shape[1:])
                 losses = jax.vmap(partial(batched_loss, params))(xscan, yscan)
                 # losses = jax.lax.scan(
                 #     lambda carry, xy: (carry, loss_fn(params, *xy)),
                 #     None,
                 #     (xscan, yscan),
                 #     )[1]
-                xleft = x[vleftover:]
-                yleft = y[vleftover:]
+                xleft = x[remv:]
+                yleft = y[remv:]
                 loss = batched_loss(params, xleft, yleft)
                 losses = jnp.concatenate([losses, jnp.array([loss])])
                 return losses
