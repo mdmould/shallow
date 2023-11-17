@@ -42,11 +42,12 @@ def trainer(
 
     if loss_fn is None:
         loss_fn = mse
-    def batched_loss(params, x, y):
+    def loss_vmap(params, x, y):
         model = equinox.combine(params, static)
-        vmap_loss = jax.vmap(partial(loss_fn, model))
-        return vmap_loss(x, y).mean()
-    loss_and_grad = jax.value_and_grad(batched_loss)
+        loss_model = partial(loss_fn, model)
+        return jax.vmap(loss_model)(x, y)
+    loss_batch = lambda params, x, y: loss_vmap(params, x, y).mean()
+    loss_and_grad = jax.value_and_grad(loss_batch)
 
     def cond_loss(current, best):
         epoch, loss, params = current
@@ -119,33 +120,41 @@ def trainer(
         if nv == vbatch_size:
 
             def valid_scan(params, x, y):
-                return batched_loss(params, x, y)
+                return loss_batch(params, x, y)
 
         elif remv == 0:
 
             def valid_scan(params, x, y):
-                xs = x.reshape(nbv, vbatch_size, *x.shape[1:])
-                ys = y.reshape(nbv, vbatch_size, *y.shape[1:])
-                return jax.vmap(partial(batched_loss, params))(xs, ys)
+                # xs = x.reshape(nbv, vbatch_size, *x.shape[1:])
+                # ys = y.reshape(nbv, vbatch_size, *y.shape[1:])
+                # return jax.vmap(partial(loss_batch, params))(xs, ys)
                 # return jax.lax.scan(
                 #     lambda carry, xy: (carry, loss_fn(params, *xy)),
                 #     None,
                 #     (xs, ys),
                 #     )[1]
+                losses = loss_vmap(params, x, y)
+                losses = losses.reshape(nbv, vbatch_size)
+                losses = losses.mean(axis=1)
+                return losses
 
         else:
             def valid_scan(params, x, y):
-                xscan = x[:-remv].reshape(nbv, vbatch_size, *x.shape[1:])
-                yscan = y[:-remv].reshape(nbv, vbatch_size, *y.shape[1:])
-                losses = jax.vmap(partial(batched_loss, params))(xscan, yscan)
-                # losses = jax.lax.scan(
-                #     lambda carry, xy: (carry, loss_fn(params, *xy)),
-                #     None,
-                #     (xscan, yscan),
-                #     )[1]
-                xleft = x[remv:]
-                yleft = y[remv:]
-                loss = batched_loss(params, xleft, yleft)
+                # xscan = x[:-remv].reshape(nbv, vbatch_size, *x.shape[1:])
+                # yscan = y[:-remv].reshape(nbv, vbatch_size, *y.shape[1:])
+                # losses = jax.vmap(partial(loss_batch, params))(xscan, yscan)
+                # # losses = jax.lax.scan(
+                # #     lambda carry, xy: (carry, loss_fn(params, *xy)),
+                # #     None,
+                # #     (xscan, yscan),
+                # #     )[1]
+                # xleft = x[-remv:]
+                # yleft = y[-remv:]
+                # loss = loss_batch(params, xleft, yleft)
+                losses = loss_vmap(params, x, y)
+                loss = losses[-remv:].mean()
+                losses = losses[:-remv].reshape(nbv, vbatch_size)
+                losses = losses.mean(axis=1)
                 losses = jnp.concatenate([losses, jnp.array([loss])])
                 return losses
 
@@ -157,7 +166,7 @@ def trainer(
                 params, state, xt[shuffle], yt[shuffle],
                 )
             tloss = losses.mean()
-            shuffle = jax.random.permutation(vkey, nv)
+            shuffle = jax.random.permutation(vkey, nv)            
             vloss = valid_scan(params, xv[shuffle], yv[shuffle]).mean()
             best = cond_loss((epoch, vloss, params), best)
             return (key, params, state, best), (tloss, vloss)
@@ -180,13 +189,11 @@ def trainer(
     best = 0, jnp.inf, params
     init = key, params, state, best
     epochs = jnp.arange(max_epochs)
-    
     carry, losses = jax.lax.scan(epoch_scan, init, epochs)
     key, params, state, best = carry
     best_epoch, best_loss, best_params = best
 
     model = equinox.combine(best_params, static)
-    
     losses = {label: loss for label, loss in zip(('train', 'valid'), losses)}
     if patience is not None:
         for label in losses:
