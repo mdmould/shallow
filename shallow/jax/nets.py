@@ -27,9 +27,10 @@ def trainer(
     wd=0,
     loss_fn=None,
     print_epoch=True,
+    filter_spec=equinox.is_inexact_array_like,
     ):
 
-    params, static = equinox.partition(model, equinox.is_inexact_array)
+    params, static = equinox.partition(model, filter_spec)
 
     xt, yt = train
     nt = xt.shape[0]
