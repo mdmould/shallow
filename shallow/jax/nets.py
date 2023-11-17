@@ -112,6 +112,8 @@ def trainer(
         xv, yv = valid
         nv = xv.shape[0]
         vbatch_size = batch_size
+        if vbatch_size > nv:
+            vbatch_size = nv
         nbv, remv = divmod(nv, vbatch_size)
 
         if nv == vbatch_size:
@@ -133,8 +135,8 @@ def trainer(
 
         else:
             def valid_scan(params, x, y):
-                xscan = x[:-remv].reshape(nbv, batch_size, *x.shape[1:])
-                yscan = y[:-remv].reshape(nbv, batch_size, *y.shape[1:])
+                xscan = x[:-remv].reshape(nbv, vbatch_size, *x.shape[1:])
+                yscan = y[:-remv].reshape(nbv, vbatch_size, *y.shape[1:])
                 losses = jax.vmap(partial(batched_loss, params))(xscan, yscan)
                 # losses = jax.lax.scan(
                 #     lambda carry, xy: (carry, loss_fn(params, *xy)),
