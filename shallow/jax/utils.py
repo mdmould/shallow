@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-import equinox
 
 
 def params_to_array(params):
