@@ -158,8 +158,8 @@ def numerical_sampling(flow, key, shape, solver=None):
     return x
 
 
-def cross_entropy(x, params, static):
-    return -equinox.combine(params, static).log_prob(x).mean()
+def ce(flow, x):
+    return -flow.log_prob(x).mean()
 
 
 def trainer(
@@ -200,7 +200,7 @@ def trainer(
     state = opt.init(params)
     
     if loss_fn is None:
-        loss_fn = lambda params, x: cross_entropy(x, params, static)
+        loss_fn = lambda params, x: ce(equinox.combine(params, static), x)
 
     prints = []
     for print_, size in zip(
