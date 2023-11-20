@@ -7,14 +7,55 @@ import optax
 
 
 def mse(model, x, y):
-    return jnp.square(y - model(x)).mean()
+    return jnp.mean(jnp.square(y - model(x)))
 
 
 def mae(model, x, y):
-    return jnp.abs(y - model(x)).mean()
+    return jnp.mean(jnp.abs(y - model(x)))
 
 
-## TODO: make y any dimension
+def ce(model, x, y):
+    return -jnp.sum(y * jnp.log(model(x)))
+
+
+def bce(model, x, y):
+    q = model(x)
+    return -(y * jnp.log(q) + (1 - y) * jnp.log(1 - q))
+
+
+def kl(model, x, y):
+    return jnp.sum(y * (jnp.log(y) - jnp.log(model(x))))
+
+
+def bkl(model, x, y):
+    q = model(x)
+    return (
+        + y * (jnp.log(y) - jnp.log(q))
+        + (1 - y) * (jnp.log(1 - y) - jnp.log(1 - q))
+        )
+
+
+def js(model, x, y):
+    q = model(x)
+    m = 0.5 * (y + q)
+    return 0.5 * jnp.sum(
+        + p * jnp.log(p)
+        + q * jnp.log(q)
+        - 2 * m * jnp.log(m)
+        )
+
+
+def bjs(model, x, y):
+    q = model(x)
+    m = 0.5 * (y + q)
+    return 0.5 * (
+        + y * (jnp.log(y) - jnp.log(m))
+        + (1 - y) * (jnp.log(1 - y) - jnp.log(1 - m))
+        + q * (jnp.log(q) - jnp.log(m))
+        + (1 - q) * (jnp.log(1 - q) - jnp.log(1 - m))
+        )
+
+
 def trainer(
     key,
     model,
