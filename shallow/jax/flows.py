@@ -3,10 +3,10 @@ from tqdm.auto import tqdm
 
 import jax
 import jax.numpy as jnp
-import equinox
-import optimistix
-import optax
 import jax_tqdm
+import equinox
+import optax
+import optimistix
 
 from flowjax.distributions import (
     StandardNormal,
@@ -163,6 +163,28 @@ def ce(flow, x):
 
 
 def trainer(
+    key,
+    flow,
+    x,
+    valid=None,
+    batch_size=None,
+    all_batches=True,
+    epochs=1,
+    patience=None,
+    lr=1e-3,
+    wd=0,
+    loss_fn=None,
+    print_batch=False,
+    print_epoch=True,
+    filter_spec=equinox.is_inexact_array_like,
+    ):
+
+    params, static = equinox.partition(flow, filter_spec)
+
+    return None
+
+
+def _trainer(
     key,
     flow,
     x,

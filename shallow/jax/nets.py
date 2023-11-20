@@ -5,6 +5,8 @@ import jax_tqdm
 import equinox
 import optax
 
+from .train import _trainer
+
 
 def mse(model, x, y):
     return jnp.mean(jnp.square(y - model(x)))
@@ -57,6 +59,26 @@ def bjs(model, x, y):
 
 
 def trainer(
+    key,
+    model,
+    train,
+    valid=None,
+    batch_size=None,
+    all_batches=True,
+    epochs=1,
+    patience=None,
+    lr=1e-3,
+    wd=0,
+    loss_fn=None,
+    print_batch=False,
+    print_epoch=True,
+    filter_spec=equinox.is_inexact_array_like,
+    ):
+
+    params, static = equinox.partition(model, filter_spec)
+
+
+def _trainer(
     key,
     model,
     train,
