@@ -324,7 +324,7 @@ def trainer(
             )
         return key, params, state, best, loss
 
-    pred_patience = lambda epoch, best_epoch: epoch > best_epoch + patience
+    pred_patience = lambda epoch, best_epoch: epoch > best_epoch + patience - 1
     pred_inf = lambda loss: jnp.logical_not(jnp.isfinite(loss))
     if patience is not None and not stop_if_inf:
         def pred_fn(loss, epoch, best_epoch):
@@ -402,14 +402,22 @@ def trainer(
         (key, params, state, (0, jnp.inf, params), False),
         jnp.arange(epochs),
         )
-    
     best_epoch, best_loss, best_params = best
+    
     flow = equinox.combine(best_params, static)
 
     if patience is not None or stop_if_inf:
         losses = jnp.array(losses)
         if jnp.any(~jnp.isfinite(losses)):
-            losses = losses[:, :jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()]    
+            cut = jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()
+            if (
+                cut == best_epoch + patience + 1 and 
+                jnp.isnan(losses[:, cut]).all()
+                ):
+                print('Stopped: patience reached')
+            else:
+                print('Stopped: loss is not finite')
+            losses = losses[:, :cut]
     losses = {k: v for k, v in zip(['train', 'valid'], losses)}
 
     return flow, losses
