@@ -184,7 +184,7 @@ def trainer(
     ):
 
     params, static = equinox.partition(flow, filter_spec)
-    opt = optax.adam(learning_rate=lr) #, weight_decay=wd)
+    opt = optax.adamw(learning_rate=lr, weight_decay=wd)
     state = opt.init(params)
 
     if loss_fn is None:
