@@ -201,7 +201,7 @@ def trainer(
             assert 0 < valid < 1
             nv = max(int(valid * x.shape[0]), 1)
             key, key_ = jax.random.split(key)
-            shuffle = jax.random.permutation(key, x.shape[0])
+            shuffle = jax.random.permutation(key_, x.shape[0])
             xv = x[shuffle][:nv]
             xt = x[shuffle][nv:]
     
@@ -210,41 +210,46 @@ def trainer(
         batch_size = nt
     nbt, remt = divmod(nt, batch_size)
 
-    def train_step(carry, ix):
+    def train_step(carry, x):
         params, state = carry
-        i, x = ix
         loss, grad = loss_and_grad(params, x)
         updates, state = opt.update(grad, state, params)
         params = equinox.apply_updates(params, updates)
         return (params, state), loss
 
-    def valid_step(params, ix):
+    def train_batch(carry, ix):
         i, x = ix
+        return train_step(carry, x)
+
+    def valid_step(params, x):
         return params, loss_batch(params, x)
+
+    def valid_batch(params, ix):
+        i, x = ix
+        return valid_step(params, x)
 
     if all_batches:
 
         if nbt == 1:
-            print_batch = False
             def train_scan(params, state, x):
-                carry, losses = train_step((params, state), (None, x))
+                carry, losses = train_step((params, state), x)
                 return *carry, losses
 
         elif remt == 0:
             def train_scan(params, state, x):
                 xs = x.reshape(nbt, batch_size, *x.shape[1:])
                 carry, losses = jax.lax.scan(
-                    train_step, (params, state), (jnp.arange(nbt), xs),
+                    train_batch, (params, state), (jnp.arange(nbt), xs),
                     )
                 return *carry, losses
 
-        else:
+        else: ## TODO: last leftover batch doesn't work with progress bar
             def train_scan(params, state, x):
                 xs = x[:-remt].reshape(nbt, batch_size, *x.shape[1:])
                 carry, losses = jax.lax.scan(
-                    train_step, (params, state), (jnp.arange(nbt), xs),
+                    train_batch, (params, state), (jnp.arange(nbt), xs),
                     )
-                carry, loss = train_step(carry, (None, x[-remt:]))
+                carry, loss = train_step(carry, x[-remt:])
                 losses = jnp.concatenate([losses, jnp.array([loss])])
                 return *carry, losses
 
@@ -265,24 +270,24 @@ def trainer(
     
             if nbv == 1:
                 def valid_scan(params, x):
-                    params, losses = valid_step(params, (None, x))
+                    params, losses = valid_step(params, x)
                     return losses
 
             elif remv == 0:
                 def valid_scan(params, x):
                     xs = x.reshape(nbv, vbatch_size, *x.shape[1:])
                     params, losses = jax.lax.scan(
-                        valid_step, params, (jnp.arange(nbv), xs),
+                        valid_batch, params, (jnp.arange(nbv), xs),
                         )
                     return losses
 
-            else:
+            else: ## TODO: last leftover batch doesn't work with progress bar
                 def valid_scan(params, x):
                     xs = x[:-remv].reshape(nbv, vbatch_size, *x.shape[1:])
                     params, losses = jax.lax.scan(
-                        valid_step, params, (jnp.arange(nbv), xs),
+                        valid_batch, params, (jnp.arange(nbv), xs),
                         )
-                    params, loss = valid_step(params, (None, x[-remv:]))
+                    params, loss = valid_step(params, x[-remv:])
                     return jnp.concatenate([losses, jnp.array([loss])])
 
             def epoch_step(key, params, state):
@@ -301,16 +306,16 @@ def trainer(
             def epoch_step(key, params, state):
                 key, tkey = jax.random.split(key)
                 xs = jax.random.choice(tkey, xt, shape=(batch_size,))
-                (params, state), loss = train_step((params, state), (None, xs))
+                (params, state), loss = train_step((params, state), xs)
                 return key, params, state, (loss,)
 
         else:
             def epoch_step(key, params, state):
                 key, tkey, vkey = jax.random.split(key, 3)
                 xs = jax.random.choice(tkey, xt, shape=(batch_size,))
-                (params, state), tloss = train_step((params, state), (None, xs))
+                (params, state), tloss = train_step((params, state), xs)
                 xs = jax.random.choice(vkey, xv, shape=(batch_size,))
-                params, vloss = valid_step(params, (None, xs))
+                params, vloss = valid_step(params, xs)
                 return key, params, state, (tloss, vloss)
 
     def cond_loss(carry, epoch):
@@ -360,7 +365,7 @@ def trainer(
     sizes = [epochs, nbt]
     if valid is not None:
         prints_.append(print_batch)
-        sizes_.append(nbv)
+        sizes.append(nbv)
     prints = []
     for print_, size in zip(prints_, sizes):
         if print_:
@@ -389,13 +394,13 @@ def trainer(
             )(cond_loss)
     p = int(bool(print_epoch))
     if print_train:
-        train_step = jax_tqdm.scan_tqdm(
+        train_batch = jax_tqdm.scan_tqdm(
             nbt, print_rate=print_train, desc='train', position=p, leave=False,
-            )(train_step)
+            )(train_batch)
     if valid is not None and print_valid:
-        valid_step = jax_tqdm.scan_tqdm(
+        valid_batch = jax_tqdm.scan_tqdm(
             nbv, print_rate=print_valid, desc='valid', position=p, leave=False,
-            )(valid_step)
+            )(valid_batch)
 
     (key, params, state, best, stop), losses = jax.lax.scan(
         cond_patience,
@@ -423,7 +428,7 @@ def trainer(
     return flow, losses
 
 
-# def _trainer(
+# def trainer(
 #     key,
 #     flow,
 #     x,
