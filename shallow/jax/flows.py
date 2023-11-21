@@ -180,7 +180,7 @@ def trainer(
     loss_fn=None,
     print_batch=False,
     print_epoch=True,
-    filter_spec=equinox.is_inexact_array_like,
+    filter_spec=equinox.is_inexact_array,
     ):
 
     params, static = equinox.partition(flow, filter_spec)

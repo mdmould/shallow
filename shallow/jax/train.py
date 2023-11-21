@@ -17,11 +17,12 @@ def _trainer(
     all_batches=True,
     epochs=1,
     patience=None,
+    stop_if_inf=True,
     lr=1e-3,
     wd=0,
     print_batch=False,
     print_epoch=True,
-    filter_spec=equinox.is_inexact_array_like,
+    filter_spec=equinox.is_inexact_array,
     ):
 
 
