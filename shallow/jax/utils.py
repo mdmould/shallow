@@ -4,7 +4,8 @@ import jax.numpy as jnp
 
 def params_to_array(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
-    array = jnp.concatenate([a.flatten() for a in arrays])
+    flat_arrays = list(map(jnp.ravel, arrays))
+    array = jnp.concatenate(flat_arrays)
     return array
 
 
