@@ -1,2 +1,11 @@
-git+https://github.com/mdmould/nflows
+tensorflow
+torch
+nflows @ git+https://github.com/bayesiains/nflows.git
+pyro-ppl
+numpyro
+jax
+jax_tqdm @ git+https://github.com/jeremiecoullon/jax-tqdm.git
+optax
+equinox
+flowjax
 
