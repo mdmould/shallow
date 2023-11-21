@@ -78,6 +78,10 @@ def trainer(
     params, static = equinox.partition(model, filter_spec)
 
 
+    
+    return None
+
+
 def _trainer(
     key,
     model,
@@ -89,6 +93,7 @@ def _trainer(
     lr=1e-3,
     wd=0,
     loss_fn=None,
+    print_batch=False,
     print_epoch=True,
     filter_spec=equinox.is_inexact_array_like,
     ):
@@ -99,6 +104,7 @@ def _trainer(
     nt = xt.shape[0]
     if batch_size is None:
         batch_size = nt
+        print_batch = False
     nbt, remt = divmod(nt, batch_size)
 
     opt = optax.adamw(learning_rate=lr, weight_decay=wd)

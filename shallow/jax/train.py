@@ -6,6 +6,7 @@ import equinox
 import optax
 
 
+## TODO: move general parts from .flows and .nets here and have them call this
 def _trainer(
     key,
     loss_fn,
@@ -22,5 +23,8 @@ def _trainer(
     print_epoch=True,
     filter_spec=equinox.is_inexact_array_like,
     ):
+
+
+    
 
     return None
