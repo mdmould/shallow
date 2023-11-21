@@ -361,46 +361,48 @@ def trainer(
         stop = pred_fn(loss[-1], epoch, best_epoch)
         return (key, params, state, best, stop), loss
 
-    prints_ = [print_epoch, print_batch]
-    sizes = [epochs, nbt]
-    if valid is not None:
-        prints_.append(print_batch)
-        sizes.append(nbv)
     prints = []
-    for print_, size in zip(prints_, sizes):
-        if print_:
-            if print_ is True:
-                print_ = 1
-            elif type(print_) is float:
-                assert 0 < print_ <= 1
-                print_ = max(int(print_ * size), 1)
+    sizes = []
+    if print_epoch:
+        prints.append(print_epoch)
+        sizes.append(epochs)
+    if print_batch:
+        prints.append(print_batch)
+        sizes.append(nbt)
+        if valid:
+            prints.append(print_batch)
+            sizes.append(nbv)
+    for i in range(len(prints)):
+        if prints[i]:
+            if prints[i] is True:
+                prints[i] = 1
+            elif type(prints[i]) is float:
+                assert 0 < prints[i] <= 1
+                prints[i] = max(int(prints[i] * sizes[i]), 1)
             else:
-                assert type(print_) is int
-                assert 0 < print_ < size
-        prints.append(print_)
-    if valid is None:
-        print_epoch, print_train = prints
-    else:
-        print_epoch, print_train, print_valid = prints
-    tqdm._instances.clear()
+                assert type(prints[i]) is int
+                assert 0 < prints[i] <= sizes[i]
 
     if print_epoch:
         cond_loss = jax_tqdm.scan_tqdm(
             epochs,
-            print_rate=print_epoch,
+            print_rate=prints.pop(0),
             desc='epoch',
             position=0,
             leave=True,
             )(cond_loss)
+    
     p = int(bool(print_epoch))
-    if print_train:
+    if print_batch:
         train_batch = jax_tqdm.scan_tqdm(
-            nbt, print_rate=print_train, desc='train', position=p, leave=False,
+            nbt, print_rate=prints[0], desc='train', position=p, leave=False,
             )(train_batch)
-    if valid is not None and print_valid:
-        valid_batch = jax_tqdm.scan_tqdm(
-            nbv, print_rate=print_valid, desc='valid', position=p, leave=False,
-            )(valid_batch)
+        if valid:
+            valid_batch = jax_tqdm.scan_tqdm(
+                nbv, print_rate=prints[1], desc='valid', position=p, leave=False,
+                )(valid_batch)
+
+    tqdm._instances.clear()
 
     (key, params, state, best, stop), losses = jax.lax.scan(
         cond_patience,
