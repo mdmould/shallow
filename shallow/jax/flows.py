@@ -184,14 +184,15 @@ def trainer(
     ):
 
     params, static = equinox.partition(flow, filter_spec)
-    opt = optax.adamw(learning_rate=lr, weight_decay=wd)
+    opt = optax.adam(learning_rate=lr) #, weight_decay=wd)
     state = opt.init(params)
 
     if loss_fn is None:
-        loss_fn = nll
-    def loss_vmap(params, x):
-        return jax.vmap(partial(loss_fn, equinox.combine(params, static)))(x)
-    loss_batch = lambda params, x: loss_vmap(params, x).mean()
+        loss_fn = ce
+    # def loss_vmap(params, x):
+    #     return jax.vmap(partial(loss_fn, equinox.combine(params, static)))(x)
+    # loss_batch = lambda params, x: loss_vmap(params, x).mean()
+    loss_batch = lambda params, x: loss_fn(equinox.combine(params, static), x)
     loss_and_grad = jax.value_and_grad(loss_batch)
 
     xt = x
@@ -417,11 +418,14 @@ def trainer(
         losses = jnp.array(losses)
         if jnp.any(~jnp.isfinite(losses)):
             cut = jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()
-            if (
-                cut == best_epoch + patience + 1 and 
-                jnp.isnan(losses[:, cut]).all()
-                ):
-                print('Stopped: patience reached')
+            if patience is not None:
+                if (
+                    cut == best_epoch + patience + 1 and 
+                    jnp.isnan(losses[:, cut]).all()
+                    ):
+                    print('Stopped: patience reached')
+                else:
+                    print('Stopped: loss is not finite')
             else:
                 print('Stopped: loss is not finite')
             losses = losses[:, :cut]
