@@ -47,7 +47,8 @@ def plot_corner_bilby(xs, fname=None, **kwargs):
         plot_density=False,
         plot_datapoints=True,
         fill_contours=True,
-        max_n_ticks=3
+        max_n_ticks=3,
+        truths=None
     )
     defaults_kwargs.update(kwargs)
 

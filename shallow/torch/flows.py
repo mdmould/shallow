@@ -117,6 +117,7 @@ class BaseFlow(Flow):
         linear=None, # None or 'lu'
         embedding=None, # Network to embed contexts
         distribution=None, # None (standard normal) or nflows Distribution
+        eps=1e-6, # fudge-factor for numerical error when performing an inverse sigmoid transform on bounded parameters
         **kwargs, # Keyword arguments passed to transform constructor
         ):
         
@@ -134,12 +135,12 @@ class BaseFlow(Flow):
             embedding = self._get_embedding(norm_contexts, embedding)
             
         # Pre-transformations for boundaries and normalization
-        pre_transform = self._get_pre_transform(bounds, norm_inputs)
+        pre_transform = self._get_pre_transform(bounds, norm_inputs, eps)
                 
         # Main transforms in the flow
         main_transform = self._get_main_transform(
             transforms, permutation, linear, batchnorm_between, kwargs,
-            )
+        )
 
         transform = CompositeTransform([pre_transform, main_transform])
         
@@ -192,7 +193,12 @@ class BaseFlow(Flow):
         return embedding
 
     # Combine per-dimension bounds into one bijection
-    def _get_bounds_transform(self, bounds):
+    def _get_bounds_transform(self, bounds, eps):
+        """ Apply bounds per-dimension.
+
+        TODO
+
+        """
         
         assert len(bounds) == self.inputs
 
@@ -218,7 +224,7 @@ class BaseFlow(Flow):
                 featurewise_transforms.append(CompositeTransform([
                     InverseTransform(AffineTransform(shift, scale)),
                     InverseTransform(Exp()),
-                    ]))
+                ]))
 
             # Bounded
             else:
@@ -226,8 +232,8 @@ class BaseFlow(Flow):
                 scale = max(bound) - min(bound)
                 featurewise_transforms.append(CompositeTransform([
                     InverseTransform(AffineTransform(shift, scale)),
-                    InverseTransform(Sigmoid()),
-                    ]))
+                    InverseTransform(Sigmoid(eps=eps)),
+                ]))
 
         return FeaturewiseTransform(featurewise_transforms)
     
@@ -238,13 +244,13 @@ class BaseFlow(Flow):
             )
 
     # Fixed pre-transforms for bounded densities and standardization
-    def _get_pre_transform(self, bounds, norm_inputs):
+    def _get_pre_transform(self, bounds, norm_inputs, eps):
         
         pre_transform = IdentityTransform()
 
         # Enforce boundaries
         if bounds is not None:
-            pre_transform = self._get_bounds_transform(bounds)
+            pre_transform = self._get_bounds_transform(bounds, eps)
             
         # Zero mean + unit variance per parameter dimension
         if norm_inputs is not False:
@@ -252,7 +258,7 @@ class BaseFlow(Flow):
                 norm_inputs = pre_transform(torch.as_tensor(norm_inputs))[0]
             pre_transform = CompositeTransform(
                 [pre_transform, self._get_norm_transform(norm_inputs)],
-                )
+            )
             
         return pre_transform
     
@@ -340,14 +346,71 @@ class CouplingNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
         self, mask='mid', bins=5, tails='linear', bound=5.0,
-        ):
+    ):
         
         if type(mask) is str:
             mask = dict(
                 alternating=create_alternating_binary_mask(self.inputs),
                 mid=create_mid_split_binary_mask(self.inputs),
                 random=create_random_binary_mask(self.inputs),
-                )[mask]
+            )[mask]
+
+        net = ResidualNetwork if self.residual else ForwardNetwork
+        fn = lambda inputs, outputs: net(
+            inputs=inputs,
+            outputs=outputs,
+            contexts=self.contexts,
+            blocks=self.blocks,
+            hidden=self.hidden,
+            activation=self.activation,
+            dropout=self.dropout,
+            batchnorm=self.batchnorm_within,
+        )
+
+        # if residual:
+        #     net = lambda inputs, outputs: ResidualNet(
+        #         inputs,
+        #         outputs,
+        #         context_features=self.contexts,
+        #         num_blocks=self.blocks,
+        #         hidden_features=self.hidden,
+        #         activation=get_activation(self.activation, functional=True),
+        #         dropout_probability=self.dropout,
+        #         use_batch_norm=self.batchnorm_within,
+        #         )
+        # else:
+        #     net = lambda inputs, outputs: ForwardNet(
+        #         inputs=inputs,
+        #         outputs=outputs,
+        #         contexts=self.contexts,
+        #         blocks=self.blocks,
+        #         hidden=self.hidden,
+        #         activation=self.activation,
+        #         dropout=self.dropout,
+        #         batchnorm=self.batchnorm_within,
+        #         )
+        
+        return PiecewiseRationalQuadraticCouplingTransform(
+            mask=mask,
+            transform_net_create_fn=fn,
+            num_bins=bins,
+            tails=tails,
+            tail_bound=bound,
+        )
+
+
+class CouplingNeuralSplineFlowCustomStretch(CouplingNeuralSplineFlow):
+    
+    def _get_transform(
+        self, mask='mid', bins=5, tails='linear', bound=5.0,
+    ):
+        
+        if type(mask) is str:
+            mask = dict(
+                alternating=create_alternating_binary_mask(self.inputs),
+                mid=create_mid_split_binary_mask(self.inputs),
+                random=create_random_binary_mask(self.inputs),
+            )[mask]
 
         net = ResidualNetwork if self.residual else ForwardNetwork
         fn = lambda inputs, outputs: net(
@@ -392,7 +455,23 @@ class CouplingNeuralSplineFlow(BaseFlow):
             tail_bound=bound,
             )
 
+    def _get_pre_transform(self, bounds, norm_inputs, eps):
+        
+        pre_transform = IdentityTransform()
 
+        # Enforce boundaries
+        if bounds is not None:
+            pre_transform = self._get_bounds_transform(bounds, eps)
+            
+        # Zero mean + unit variance per parameter dimension
+        if norm_inputs is not False:
+            if norm_inputs is not True:
+                norm_inputs = pre_transform(torch.as_tensor(norm_inputs))[0]
+            pre_transform = CompositeTransform(
+                [pre_transform, self._get_norm_transform(norm_inputs)],
+            )
+            
+        return pre_transform
 ## TODO: sub-class train.Trainer
 def trainer(
     model,
@@ -417,6 +496,8 @@ def trainer(
     print_to_file=False,
     ):
     
+    import matplotlib.pyplot as plt
+        
     if seed is not None:
         torch.manual_seed(seed)
         
@@ -612,8 +693,11 @@ def trainer(
             break
             
         if save is not None:
+            current_model = deepcopy(model.state_dict())
+            torch.save(current_model, f'{save}_latest.pt')
             np.save(f'{save}.npy', losses, allow_pickle=True)
-            plot_loss(losses, fname=f'{save}.png')
+            fig, ax = plot_loss(losses, fname=f'{save}.png')
+            plt.close()
             
         if loss_track < best_loss:
             best_epoch = epoch
