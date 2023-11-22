@@ -574,7 +574,7 @@ def trainer(
     
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
-        )
+    )
     
     best_model = deepcopy(model.state_dict())
     best_epoch = 0
@@ -698,6 +698,393 @@ def trainer(
             np.save(f'{save}.npy', losses, allow_pickle=True)
             fig, ax = plot_loss(losses, fname=f'{save}.png')
             plt.close()
+            
+        if loss_track < best_loss:
+            best_epoch = epoch
+            best_loss = loss_track
+            best_model = deepcopy(model.state_dict())
+            if save is not None:
+                torch.save(best_model, f'{save}.pt')
+                
+        if reduce is not None:
+            if epoch - best_epoch == 0:
+                epoch_reduce = epoch
+            if epoch - epoch_reduce > reduce:
+                epoch_reduce = epoch
+                if verbose:
+                    print(f'No improvement for {reduce} epochs, reducing lr')
+                for group in optimizer.param_groups:
+                    group['lr'] /= 2
+                    
+        if stop is not None:
+            if epoch - best_epoch > stop:
+                if verbose:
+                    print(f'No improvement for {stop} epochs, stopping')
+                break
+                
+    if verbose and save:
+        print(save)
+        
+    model.load_state_dict(best_model)
+    model.eval()
+                
+    return model, losses
+
+def trainer_tempered_annealing(
+    model,
+    inputs,
+    input_log_prob=None, # for computing tempered weights
+    log_prob_test=None,  # for computing reweighting efficiencies
+    inputs_test=None,    # associated w/ prev argument
+    contexts_test=None,  # associated w/ prev argument
+    contexts=None,
+    inputs_valid=None,
+    contexts_valid=None,
+    loss=None,
+    optimizer='adam',
+    learning_rate=1e-3,
+    weight_decay=0,
+    epochs=1,
+    batch_size=None,
+    batch_size_valid='train',
+    shuffle=True,
+    reduce=None,
+    stop=None,
+    stop_if_inf=True,
+    verbose=True,
+    save=None,
+    seed=None,
+    print_to_file=False,
+    beta_limit=1,
+    sigma_m=None,
+    E=250,
+    nsamples=None
+    ):
+    
+    import matplotlib.pyplot as plt
+        
+    if seed is not None:
+        torch.manual_seed(seed)
+        
+    model.to(device)
+    
+    inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
+    if inputs.ndim == 1:
+        inputs = inputs[..., None]
+        
+    conditional = False
+    if contexts is not None:
+        conditional = True
+        
+        contexts = torch.as_tensor(contexts, dtype=torch.float32, device=cpu)
+        if contexts.ndim == 1:
+            contexts = contexts[..., None]
+        assert contexts.shape[0] == inputs.shape[0]
+        
+    validate = False
+    if inputs_valid is not None:
+        validate = True
+        
+        inputs_valid = torch.as_tensor(
+            inputs_valid, dtype=torch.float32, device=cpu,
+            )
+        if inputs_valid.ndim == 1:
+            inputs_valid = inputs_valid[..., None]
+        assert inputs_valid.shape[-1] == inputs.shape[-1]
+                        
+        if conditional:
+            assert contexts_valid is not None
+            
+            contexts_valid = torch.as_tensor(
+                contexts_valid, dtype=torch.float32, device=cpu,
+                )
+            if contexts_valid.ndim == 1:
+                contexts_valid = contexts_valid[..., None]
+            assert contexts_valid.shape[0] == inputs_valid.shape[0]
+            assert contexts_valid.shape[-1] == contexts.shape[-1]
+            
+            if (batch_size_valid is None or
+                ((batch_size_valid == 'train') and (batch_size is None))
+                ):
+                contexts_valid = contexts_valid[None, ...]
+            else:
+                if batch_size_valid == 'train':
+                    batch_size_valid = batch_size
+                contexts_valid = contexts_valid.split(batch_size_valid)
+                
+        if (batch_size_valid is None or
+            ((batch_size_valid == 'train') and (batch_size is None))
+            ):
+            inputs_valid = inputs_valid[None, ...]
+        else:
+            if batch_size_valid == 'train':
+                batch_size_valid = batch_size
+            inputs_valid = inputs_valid.split(batch_size_valid)
+                
+    if not shuffle:
+        if batch_size is None:
+            inputs = inputs[None, ...]
+        else:
+            inputs = inputs.split(batch_size)
+            
+        if conditional:
+            if batch_size is None:
+                contexts = contexts[None, ...]
+            else:
+                contexts = contexts.split(batch_size)
+                
+    if loss is None:
+        loss = lambda i, weights=1, c=None: -(weights * model.log_prob(i, context=c)).mean()
+    assert callable(loss)
+    
+    optimizer = get_optimizer(optimizer)(
+        model.parameters(),lr=learning_rate, weight_decay=weight_decay,
+    )
+    
+    best_model = deepcopy(model.state_dict())
+    best_epoch = 0
+    best_loss = float('inf')
+    losses = {'train': []}
+    if validate:
+        losses['valid'] = []
+        losses['valid_weighted'] = []
+    if reduce is not None:
+           epoch_reduce = 0
+
+    betas = []
+    test_efficiencies = []
+
+    # 'chemical potential' equivalent for inverse temperature
+    A = -sigma_m**(1/E)
+
+    epoch_loop = range(1, epochs + 1)
+    # if verbose:
+    epoch_loop = tqdm(epoch_loop, position=0)
+    for epoch in epoch_loop:
+        # if verbose:
+        #     print(f'Epoch {epoch}')
+        
+        # Training
+        model = model.train()
+
+        # compute the inverse temperature this epoch
+        beta = (np.exp(-epoch / E) * A + 1)**(-1) # (number of injections, )
+        beta = np.tile(beta, (nsamples,1)).T # (number of injections, number of samples)
+        beta_min = min(beta)
+        beta_max = max(beta)
+
+        betas.append(beta)
+        
+        print(f'min, max beta = {beta_min:.7E}, {beta_max:.7E}')
+        
+        # could also cut on average beta? will just have to see what it is
+        if beta_min > beta_limit:
+            if verbose:
+                print(f'surpassed beta_limit = {beta_limit:.7E}, stopping!')
+            break
+
+        # temper the inputs via rejection sampling
+        if beta < 1:
+            ln_weights = (beta - 1) * input_log_prob # (number of injections, number of samples)
+            weights = torch.exp(ln_weights)
+
+            if torch.isinf(weights).any() or torch.isnan(weights).any():
+                raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
+        else:
+            weights = torch.ones(input_log_prob.shape)
+ 
+        if shuffle:
+            perm = torch.randperm(inputs.shape[0])
+            
+            inputs_train = inputs[perm]
+            if batch_size is None:
+                inputs_train = inputs_train[None, ...]
+            else:
+                inputs_train = inputs_train.split(batch_size)
+                
+            if conditional:
+                contexts_train = contexts[perm]
+                if batch_size is None:
+                    contexts_train = contexts_train[None, ...]
+                else:
+                    contexts_train = contexts_train.split(batch_size)
+            
+        else:
+            inputs_train = inputs
+            if conditional:
+                contexts_train = contexts
+                
+        n = len(inputs_train)
+        if conditional:
+            loop = zip(inputs_train, contexts_train)
+        else:
+            loop = inputs_train
+        if verbose:
+            if print_to_file:
+                loop = tqdm(loop, total=n, desc='Train batch')
+            else:
+                loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
+            
+        loss_train = 0
+        for batch in loop:
+            optimizer.zero_grad()
+            
+            if conditional:
+                i, c = batch
+                loss_step = loss(i.to(device), weights=weights, c=c.to(device))
+            else:
+                loss_step = loss(batch.to(device))
+                
+            if loss_step.isinf():
+                loss_is_inf = True
+                if stop_if_inf:
+                    break
+            else:
+                loss_is_inf = False
+                loss_step.backward()
+                optimizer.step()
+                loss_train += loss_step.item()
+
+        loss_train /= n
+        losses['train'].append(loss_train)
+        loss_track = loss_train
+        
+        # Validation
+        if validate:
+            model = model.eval()
+            with torch.inference_mode():
+                
+                n = len(inputs_valid)
+                if conditional:
+                    loop = zip(inputs_valid, contexts_valid)
+                else:
+                    loop = inputs_valid
+                if verbose:
+                    if print_to_file:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1)
+                    else:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
+                    
+                loss_valid = 0
+                loss_valid_weighted = 0
+                for batch in loop:
+                    
+                    if conditional:
+                        i, c = batch
+                        loss_step = loss(i.to(device), weights=1, c=c.to(device))
+                        loss_step_weighted = loss(i.to(device), weights=weights, c=c.to(device))
+                    else:
+                        loss_step = loss(batch.to(device))
+                        
+                    if loss_step.isinf() or loss_step_weighted.isinf():
+                        loss_is_inf = True
+                        if stop_if_inf:
+                            break
+                    else:
+                        loss_is_inf = False
+                        loss_valid += loss_step.item()
+                        loss_valid_weighted += loss_step_weighted.item()
+
+                loss_valid /= n
+                loss_valid_weighted /= n
+                losses['valid'].append(loss_valid)
+                losses['valid_weighted'].append(loss_valid_weighted)
+                loss_track = loss_valid
+        
+        # compute efficiency of reweighing to test set
+        # note: all thsi should be shaped like (ntest, nsamples)
+        test_ln_weights = log_prob_test - model.log_prob(
+            inputs_test, context=contexts_test
+        )
+        test_weights = torch.exp(test_ln_weights)
+        if torch.isinf(test_weights).any() or torch.isnan(test_weights).any():
+            raise ValueError('found inf/nan in the weights! regularize your weights, dummy') 
+        test_efficiencies.append(
+            np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
+        )
+
+        if stop_if_inf and loss_is_inf:
+            print('nan/inf loss, stopping')
+            break
+            
+        if save is not None:
+            current_model = deepcopy(model.state_dict())
+            torch.save(current_model, f'{save}_latest.pt')
+            np.save(f'{save}.npy', losses, allow_pickle=True)
+            _ = plot_loss(losses, fname=f'{save}.png')
+            plt.close()
+
+            # save betas, efficiencies
+            np.save(f'{save}_betas.npy', betas, allow_pickle=True)
+            np.save(
+                f'{save}_test_efficiencies.npy',
+                test_efficiencies,
+                allow_pickle=True
+            )
+
+            # plot min, max, median betas
+            fig, ax = plt.subplots()
+            ax.set_xlabel('epoch')
+            ax.set_ylabel(r'$\beta$')
+            ax.plot(
+                range(epoch),
+                [min(betas[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'min'
+            )
+            ax.plot(
+                range(epoch),
+                [torch.median(betas[i]) for i in range(epoch)],
+                label=r'median'
+            )
+            ax.plot(
+                range(epoch),
+                [max(betas[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'max'
+            )
+            fig.savefig(f'{save}_betas.png')
+            plt.close()
+
+            # plot min, max, 1sigma, and mean efficiencies
+            fig, ax = plt.subplots()
+            ax.set_xlabel('epoch')
+            ax.set_ylabel(r'test reweighting efficiency')
+            ax.plot(
+                range(epoch),
+                [min(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'min'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    torch.mean(test_efficiencies[i]) - torch.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean - 1 std'
+            )
+            ax.plot(
+                range(epoch),
+                [torch.mean(test_efficiencies[i]) for i in range(epoch)],
+                label=r'mean'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    torch.mean(test_efficiencies[i]) + torch.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 1 std'
+            )
+            ax.plot(
+                range(epoch),
+                [max(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'max'
+            )
+            fig.savefig(f'{save}_test_efficiencies.png')
+            plt.close() 
             
         if loss_track < best_loss:
             best_epoch = epoch
