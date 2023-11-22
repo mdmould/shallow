@@ -733,7 +733,8 @@ def trainer(
 def trainer_tempered_annealing(
     model,
     inputs,
-    input_log_prob=None, # for computing tempered weights
+    log_prob_train=None, # for computing tempered weights
+    log_prob_valid=None, # see above
     log_prob_test=None,  # for computing reweighting efficiencies
     inputs_test=None,    # associated w/ prev argument
     contexts_test=None,  # associated w/ prev argument
@@ -885,13 +886,18 @@ def trainer_tempered_annealing(
 
         # temper the inputs via rejection sampling
         if beta < 1:
-            ln_weights = (beta - 1) * input_log_prob # (number of injections, number of samples)
-            weights = torch.exp(ln_weights)
+            ln_weights_train = (beta - 1) * log_prob_train # (number of injections, number of samples)
+            weights_train = torch.exp(ln_weights_train)
 
-            if torch.isinf(weights).any() or torch.isnan(weights).any():
+            ln_weights_valid = (beta - 1) * log_prob_valid
+            weights_valid = torch.exp(ln_weights_valid)
+
+            if (torch.isinf(torch.concatenate(weights_train, weights_valid)).any() or
+                torch.isnan(torch.concatenate(weights_train, weights_valid)).any()):
                 raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
         else:
-            weights = torch.ones(input_log_prob.shape)
+            weights_train = torch.ones(log_prob_train.shape)
+            weights_valid = torch.ones(log_prob_valid.shape)
  
         if shuffle:
             perm = torch.randperm(inputs.shape[0])
@@ -931,7 +937,7 @@ def trainer_tempered_annealing(
             
             if conditional:
                 i, c = batch
-                loss_step = loss(i.to(device), weights=weights, c=c.to(device))
+                loss_step = loss(i.to(device), weights=weights_train, c=c.to(device))
             else:
                 loss_step = loss(batch.to(device))
                 
@@ -972,7 +978,7 @@ def trainer_tempered_annealing(
                     if conditional:
                         i, c = batch
                         loss_step = loss(i.to(device), weights=1, c=c.to(device))
-                        loss_step_weighted = loss(i.to(device), weights=weights, c=c.to(device))
+                        loss_step_weighted = loss(i.to(device), weights=weights_valid, c=c.to(device))
                     else:
                         loss_step = loss(batch.to(device))
                         
@@ -989,7 +995,7 @@ def trainer_tempered_annealing(
                 loss_valid_weighted /= n
                 losses['valid'].append(loss_valid)
                 losses['valid_weighted'].append(loss_valid_weighted)
-                loss_track = loss_valid
+                loss_track = loss_valid_weighted
         
         # compute efficiency of reweighing to test set
         # note: all thsi should be shaped like (ntest, nsamples)
