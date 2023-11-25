@@ -1,4 +1,5 @@
 from functools import partial
+from tqdm.auto import tqdm
 import jax
 import jax.numpy as jnp
 import jax_tqdm
@@ -95,6 +96,7 @@ def trainer(
         if type(valid) is tuple:
             xv, yv = valid
             assert xv.shape[0] == yv.shape[0]
+            nv = xv.shape[0]
         elif type(valid) is float:
             assert 0 < valid < 1
             nv = max(int(valid * xt.shape[0]), 1)
@@ -122,7 +124,7 @@ def trainer(
         return train_step(carry, batch)
 
     def valid_step(params, batch):
-        return None, loss_batch(params, *batch)
+        return params, loss_batch(params, *batch)
 
     def valid_batch(params, ibatch):
         i, batch = ibatch
@@ -149,7 +151,7 @@ def trainer(
                 xs = x[:-remt].reshape(nbt, batch_size, *x.shape[1:])
                 ys = y[:-remt].reshape(nbt, batch_size, *y.shape[1:])
                 carry, losses = jax.lax.scan(
-                    train_batch, (params, state), (jnp.arange(nbt), (xy, ys)),
+                    train_batch, (params, state), (jnp.arange(nbt), (xs, ys)),
                     )
                 carry, loss = train_step(carry, (x[-remt:], y[-remt:]))
                 losses = jnp.concatenate([losses, jnp.array([loss])])
@@ -174,7 +176,7 @@ def trainer(
 
             if nbv == 1:
                 def valid_scan(params, x, y):
-                    return valid_step(params, x, y)[1]
+                    return valid_step(params, (x, y))[1]
 
             elif remv == 0:
                 def valid_scan(params, x, y):
@@ -191,7 +193,7 @@ def trainer(
                     losses = jax.lax.scan(
                         valid_batch, params, (jnp.arange(nbv), (xs, ys)),
                         )[1]
-                    loss = valid_step(params, x[-remv:], y[-remv:])
+                    loss = valid_step(params, (x[-remv:], y[-remv:]))[1]
                     return jnp.concatenate([losses, jnp.array([loss])])
 
             def epoch_step(key, params, state):
@@ -221,10 +223,10 @@ def trainer(
             def epoch_step(key, params, state):
                 key, tkey, vkey = jax.random.split(key, 3)
                 idxs = jax.random.choice(tkey, nt, shape=(batch_size,))
-                (params, state), loss = train_step(
+                (params, state), tloss = train_step(
                     (params, state), (xt[idxs], yt[idxs]),
                     )
-                idxs = jax.random.choice(vkey, nv, shape=(vbatch-size,))
+                idxs = jax.random.choice(vkey, nv, shape=(batch_size,))
                 vloss = valid_step(params, (xv[idxs], yv[idxs]))[1]
                 return key, params, state, (tloss, vloss)
 
