@@ -25,7 +25,11 @@ def _trainer(
     filter_spec=equinox.is_inexact_array,
     ):
 
-
+    if type(train) is tuple:
+        if valid is not None:
+            assert type(valid) is tuple
+            assert len(valid) == len(train)
+            
     
 
     return None

@@ -400,7 +400,11 @@ def trainer(
             )(train_batch)
         if valid:
             valid_batch = jax_tqdm.scan_tqdm(
-                nbv, print_rate=prints[1], desc='valid', position=p, leave=False,
+                nbv,
+                print_rate=prints[1],
+                desc='valid',
+                position=p,
+                leave=False,
                 )(valid_batch)
 
     tqdm._instances.clear()
