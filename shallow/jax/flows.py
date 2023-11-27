@@ -157,18 +157,94 @@ def get_filter(flow, filter_spec=equinox.is_inexact_array):
 #     return x
 
 
-def nll(flow, x):
-    return -flow.log_prob(x)
+def nll(flow, x, c=None):
+    return -flow.log_prob(x, condition=c)
 
 
-def ce(flow, x):
-    return nll(flow, x).mean()
+def ce(flow, x, c=None):
+    return nll(flow, x, c=c).mean()
 
 
 def trainer(
     key,
     flow,
-    x,
+    train,
+    valid=None,
+    batch_size=None,
+    all_batches=True,
+    epochs=1,
+    patience=None,
+    stop_if_inf=True,
+    lr=1e-3,
+    wd=None,
+    opt=None,
+    loss_fn=None,
+    print_batch=False,
+    print_epoch=True,
+    filter_spec=equinox.is_inexact_array,
+    ):
+
+    params, static = equinox.partition(flow, filter_spec)
+
+    if opt is None:
+        if wd is None:
+            opt = optax.adam(learning_rate=lr)
+        else:
+            opt = optax.adamw(learning_rate=lr, weight_decay=wd)
+    if callable(opt):
+        if wd is None:
+            opt = opt(learning_rate=lr)
+        else:
+            opt = opt(learning_rate=lr, weight_decay=wd)
+            
+    state = opt.init(params)
+
+    if loss_fn is None:
+        loss_fn = ce
+    loss_batch = lambda params, *x: loss_fn(equinox.combine(params, static), *x)
+    loss_and_grad = jax.value_and_grad(loss_batch)
+
+    if type(train) is tuple and len(train) == 2:
+        train = tuple(map(jnp.asarray, train))
+        if valid is not None:
+            assert type(valid) is tuple and len(valid) == 2
+            valid = tuple(map(jnp.asarray, valid))
+        _trainer = _trainer_conditional
+    else:
+        if type(train) is tuple:
+            assert len(train) == 1
+            train = train[0]
+        train = jnp.asarray(train)
+        if valid is not None:
+            if type(valid) is tuple:
+                assert len(valid) == 1
+                valid = valid[0]
+            valid = jnp.asarray(valid)
+        _trainer = _trainer_nonconditional    
+        
+    z =  _trainer(
+        key,
+        flow,
+        trainer,
+        valid=valid,
+        batch_size=batch_size,
+        all_batches=all_batches,
+        epochs=epochs,
+        patience=patience,
+        stop_if_inf=stop_if_inf,
+        lr=lr,
+        wd=wd,
+        loss_fn=loss_fn,
+        print_batch=print_batch,
+        print_epoch=print_epoch,
+        filter_spec=filter_spec,
+        )
+
+
+def _trainer_nonconditional(
+    key,
+    flow,
+    train,
     valid=None,
     batch_size=None,
     all_batches=True,
@@ -195,7 +271,7 @@ def trainer(
     loss_batch = lambda params, x: loss_fn(equinox.combine(params, static), x)
     loss_and_grad = jax.value_and_grad(loss_batch)
 
-    xt = x
+    xt = train
     if valid is not None:
         xv = valid
         if type(valid) is float:
