@@ -2,6 +2,7 @@ import numpy as np
 from tqdm.auto import tqdm
 from copy import deepcopy
 import torch
+from scipy.special import logsumexp
 
 from nflows.distributions import StandardNormal
 from nflows.flows import Flow
@@ -479,6 +480,9 @@ def trainer(
     contexts=None,
     inputs_valid=None,
     contexts_valid=None,
+    log_prob_test=None,  # for computing reweighting efficiencies
+    inputs_test=None,    # associated w/ prev argument
+    contexts_test=None,  # associated w/ prev argument
     loss=None,
     optimizer='adam',
     learning_rate=1e-3,
@@ -585,6 +589,8 @@ def trainer(
     if reduce is not None:
            epoch_reduce = 0
 
+    test_efficiencies = []
+
     epoch_loop = range(1, epochs + 1)
     # if verbose:
     epoch_loop = tqdm(epoch_loop, position=0)
@@ -687,16 +693,90 @@ def trainer(
                 loss_valid /= n
                 losses['valid'].append(loss_valid)
                 loss_track = loss_valid
-                
+
+        # compute efficiency of reweighing to test set
+        # note: all thsi should be shaped like (ntest, nsamples)
+        print('inputs_test.shape =', inputs_test.shape)
+        print('contexts_test.shape =', contexts_test.shape)
+
+        model_log_prob = model.log_prob(
+            inputs_test.reshape(inputs_test.shape[0] * inputs_test.shape[1], inputs_test.shape[2]),
+            context=contexts_test.reshape(contexts_test.shape[0] * contexts_test.shape[1], contexts_test.shape[2])
+        ).reshape(inputs_test.shape[:2])
+
+        print('model_log_prob.shape =', model_log_prob.shape)
+
+        test_ln_weights = (log_prob_test - model_log_prob).cpu().detach().numpy()
+        test_ln_weights -= logsumexp(test_ln_weights) # normalize weight
+        test_weights = np.exp(test_ln_weights)
+
+        if np.isinf(test_weights).any() or np.isnan(test_weights).any():
+            raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
+
+        test_eff = np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
+
+        if np.isnan(test_eff).any():
+            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
+            test_eff[np.isnan(test_eff)] = 0
+        
+        test_efficiencies.append(test_eff)
+
         if stop_if_inf and loss_is_inf:
             print('nan/inf loss, stopping')
             break
-            
+         
         if save is not None:
             current_model = deepcopy(model.state_dict())
             torch.save(current_model, f'{save}_latest.pt')
             np.save(f'{save}.npy', losses, allow_pickle=True)
             fig, ax = plot_loss(losses, fname=f'{save}.png')
+            plt.close()
+
+            np.save(
+                f'{save}_test_efficiencies.npy',
+                test_efficiencies,
+                allow_pickle=True
+            )
+
+            # plot min, max, 1sigma, and mean efficiencies
+            fig, ax = plt.subplots()
+            ax.set_xlabel('epoch')
+            ax.set_ylabel(r'test reweighting efficiency')
+            ax.plot(
+                range(epoch),
+                [min(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'min'
+            )
+            ax.plot(
+                range(epoch),
+                [np.mean(test_efficiencies[i]) for i in range(epoch)],
+                label=r'mean'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    np.mean(test_efficiencies[i]) + np.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 1 std'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    np.mean(test_efficiencies[i]) + 2 * np.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 2 std'
+            )
+            ax.plot(
+                range(epoch),
+                [max(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'max'
+            )
+            ax.legend()
+            fig.savefig(f'{save}_test_efficiencies.png')
             plt.close()
             
         if loss_track < best_loss:
@@ -758,8 +838,10 @@ def trainer_tempered_annealing(
     print_to_file=False,
     beta_limit=1,
     sigma_m=None,
+    sigma_m_valid=None,
     E=250,
-    nsamples=None
+    nsamples=None,
+    alpha=0
     ):
     
     import matplotlib.pyplot as plt
@@ -812,12 +894,14 @@ def trainer_tempered_annealing(
                 if batch_size_valid == 'train':
                     batch_size_valid = batch_size
                 contexts_valid = contexts_valid.split(batch_size_valid)
-                
+ 
         if (batch_size_valid is None or
             ((batch_size_valid == 'train') and (batch_size is None))
             ):
             inputs_valid = inputs_valid[None, ...]
         else:
+            raise ValueError('batch_size_valid not supported for tempered annealer right now')
+
             if batch_size_valid == 'train':
                 batch_size_valid = batch_size
             inputs_valid = inputs_valid.split(batch_size_valid)
@@ -833,13 +917,13 @@ def trainer_tempered_annealing(
                 contexts = contexts[None, ...]
             else:
                 contexts = contexts.split(batch_size)
-                
+    
     if loss is None:
         loss = lambda i, weights=1, c=None: -(weights * model.log_prob(i, context=c)).mean()
     assert callable(loss)
     
     optimizer = get_optimizer(optimizer)(
-        model.parameters(),lr=learning_rate, weight_decay=weight_decay,
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
     )
     
     best_model = deepcopy(model.state_dict())
@@ -848,7 +932,6 @@ def trainer_tempered_annealing(
     losses = {'train': []}
     if validate:
         losses['valid'] = []
-        losses['valid_weighted'] = []
     if reduce is not None:
            epoch_reduce = 0
 
@@ -856,7 +939,10 @@ def trainer_tempered_annealing(
     test_efficiencies = []
 
     # 'chemical potential' equivalent for inverse temperature
-    A = -sigma_m**(1/E)
+    A = sigma_m**(-1/E) * np.exp(alpha)
+    A_valid = sigma_m_valid**(-1/E) * np.exp(alpha)
+
+    print('A_valid =', A_valid)
 
     epoch_loop = range(1, epochs + 1)
     # if verbose:
@@ -870,38 +956,58 @@ def trainer_tempered_annealing(
 
         # compute the inverse temperature this epoch
         beta = (np.exp(-epoch / E) * A + 1)**(-1) # (number of injections, )
-        beta = np.tile(beta, (nsamples,1)).T # (number of injections, number of samples)
-        beta_min = min(beta)
-        beta_max = max(beta)
+        beta = torch.tile(beta, (nsamples,1)).T # (number of injections, number of samples)
+
+        beta_valid = (np.exp(-epoch / E) * A_valid + 1)**(-1)
+        beta_valid = torch.tile(beta_valid, (nsamples,1)).T
+
+        print(f'beta_train shape = {beta.shape}')
+        print(f'beta_valid shape = {beta_valid.shape}')
+
+        beta_min = beta.min()
+        beta_max = beta.max() 
 
         betas.append(beta)
-        
-        print(f'min, max beta = {beta_min:.7E}, {beta_max:.7E}')
-        
+
+        print(f'min, max beta_train = {beta_min:.7E}, {beta_max:.7E}')
+        print(f'min, max beta_valid = {beta_valid.min():.7E}, {beta_valid.max():.7E}')
+
         # could also cut on average beta? will just have to see what it is
         if beta_min > beta_limit:
             if verbose:
                 print(f'surpassed beta_limit = {beta_limit:.7E}, stopping!')
             break
 
-        # temper the inputs via rejection sampling
-        if beta < 1:
+        # tempering is equivalent to weighted loss function
+        if (beta < 1).any():
             ln_weights_train = (beta - 1) * log_prob_train # (number of injections, number of samples)
+            print('ln_weights_train min, max=', ln_weights_train.min(), ln_weights_train.max())            
             weights_train = torch.exp(ln_weights_train)
 
-            ln_weights_valid = (beta - 1) * log_prob_valid
+            ln_weights_valid = (beta_valid - 1) * log_prob_valid
+            print('ln_weights_valid min, max=', ln_weights_valid.min(), ln_weights_valid.max())    
             weights_valid = torch.exp(ln_weights_valid)
 
-            if (torch.isinf(torch.concatenate(weights_train, weights_valid)).any() or
-                torch.isnan(torch.concatenate(weights_train, weights_valid)).any()):
+            if (torch.isinf(torch.concatenate((weights_train, weights_valid))).any() or
+                torch.isnan(torch.concatenate((weights_train, weights_valid))).any()):
                 raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
         else:
             weights_train = torch.ones(log_prob_train.shape)
             weights_valid = torch.ones(log_prob_valid.shape)
- 
+
+#        weights_train = torch.ones(log_prob_train.shape)
+#        weights_valid = torch.ones(log_prob_valid.shape)
+
+
+        weights_train = weights_train.reshape(inputs.shape[0])
+        weights_valid = weights_valid.reshape(inputs_valid.squeeze().shape[0])
+        
+        print('weights_train min, max=', weights_train.min(), weights_train.max())
+        print('weights_valid min, max=', weights_valid.min(), weights_valid.max())
+
         if shuffle:
             perm = torch.randperm(inputs.shape[0])
-            
+
             inputs_train = inputs[perm]
             if batch_size is None:
                 inputs_train = inputs_train[None, ...]
@@ -914,7 +1020,10 @@ def trainer_tempered_annealing(
                     contexts_train = contexts_train[None, ...]
                 else:
                     contexts_train = contexts_train.split(batch_size)
-            
+
+            weights_train = weights_train[perm]
+            weights_train = weights_train.split(batch_size)
+
         else:
             inputs_train = inputs
             if conditional:
@@ -922,7 +1031,7 @@ def trainer_tempered_annealing(
                 
         n = len(inputs_train)
         if conditional:
-            loop = zip(inputs_train, contexts_train)
+            loop = zip(inputs_train, contexts_train, weights_train)
         else:
             loop = inputs_train
         if verbose:
@@ -930,17 +1039,17 @@ def trainer_tempered_annealing(
                 loop = tqdm(loop, total=n, desc='Train batch')
             else:
                 loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
-            
+
         loss_train = 0
         for batch in loop:
             optimizer.zero_grad()
-            
+
             if conditional:
-                i, c = batch
-                loss_step = loss(i.to(device), weights=weights_train, c=c.to(device))
+                i, c, w = batch
+                loss_step = loss(i.to(device), weights=w.to(device), c=c.to(device))
             else:
                 loss_step = loss(batch.to(device))
-                
+
             if loss_step.isinf():
                 loss_is_inf = True
                 if stop_if_inf:
@@ -954,7 +1063,7 @@ def trainer_tempered_annealing(
         loss_train /= n
         losses['train'].append(loss_train)
         loss_track = loss_train
-        
+
         # Validation
         if validate:
             model = model.eval()
@@ -962,7 +1071,7 @@ def trainer_tempered_annealing(
                 
                 n = len(inputs_valid)
                 if conditional:
-                    loop = zip(inputs_valid, contexts_valid)
+                    loop = zip(inputs_valid, contexts_valid, weights_valid)
                 else:
                     loop = inputs_valid
                 if verbose:
@@ -972,42 +1081,55 @@ def trainer_tempered_annealing(
                         loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
                     
                 loss_valid = 0
-                loss_valid_weighted = 0
+                #loss_valid_weighted = 0
                 for batch in loop:
                     
                     if conditional:
-                        i, c = batch
-                        loss_step = loss(i.to(device), weights=1, c=c.to(device))
-                        loss_step_weighted = loss(i.to(device), weights=weights_valid, c=c.to(device))
+                        i, c, w = batch
+                        loss_step = loss(i.to(device), weights=w.to(device), c=c.to(device))
+                        print('loss_step =', loss_step)
                     else:
+                        raise ValueError('not supported')
                         loss_step = loss(batch.to(device))
                         
-                    if loss_step.isinf() or loss_step_weighted.isinf():
+                    if loss_step.isinf():
+                        print('VALID LOSS IS INF!!')
                         loss_is_inf = True
                         if stop_if_inf:
                             break
                     else:
                         loss_is_inf = False
                         loss_valid += loss_step.item()
-                        loss_valid_weighted += loss_step_weighted.item()
+
+                print('loss_valid = ', loss_valid)
 
                 loss_valid /= n
-                loss_valid_weighted /= n
                 losses['valid'].append(loss_valid)
-                losses['valid_weighted'].append(loss_valid_weighted)
-                loss_track = loss_valid_weighted
+                loss_track = loss_valid
         
         # compute efficiency of reweighing to test set
         # note: all thsi should be shaped like (ntest, nsamples)
-        test_ln_weights = log_prob_test - model.log_prob(
-            inputs_test, context=contexts_test
-        )
-        test_weights = torch.exp(test_ln_weights)
-        if torch.isinf(test_weights).any() or torch.isnan(test_weights).any():
-            raise ValueError('found inf/nan in the weights! regularize your weights, dummy') 
-        test_efficiencies.append(
-            np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
-        )
+        print('inputs_test.shape =', inputs_test.shape)
+        print('contexts_test.shape =', contexts_test.shape)
+
+        model_log_prob = model.log_prob(
+            inputs_test.reshape(inputs_test.shape[0] * inputs_test.shape[1], inputs_test.shape[2]),
+            context=contexts_test.reshape(contexts_test.shape[0] * contexts_test.shape[1], contexts_test.shape[2])
+        ).reshape(inputs_test.shape[:2])
+        test_ln_weights = (log_prob_test - model_log_prob).cpu().detach().numpy()
+        test_ln_weights -= logsumexp(test_ln_weights) # normalize weight
+        test_weights = np.exp(test_ln_weights)
+
+        if np.isinf(test_weights).any() or np.isnan(test_weights).any():
+            raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
+        
+        test_eff = np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
+
+        if np.isnan(test_eff).any():
+            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
+            test_eff[np.isnan(test_eff)] = 0
+        
+        test_efficiencies.append(test_eff)
 
         if stop_if_inf and loss_is_inf:
             print('nan/inf loss, stopping')
@@ -1021,7 +1143,7 @@ def trainer_tempered_annealing(
             plt.close()
 
             # save betas, efficiencies
-            np.save(f'{save}_betas.npy', betas, allow_pickle=True)
+            torch.save(betas, f'{save}_betas.pt')
             np.save(
                 f'{save}_test_efficiencies.npy',
                 test_efficiencies,
@@ -1034,18 +1156,18 @@ def trainer_tempered_annealing(
             ax.set_ylabel(r'$\beta$')
             ax.plot(
                 range(epoch),
-                [min(betas[i]) for i in range(epoch)],
+                [betas[i].cpu().min() for i in range(epoch)],
                 linestyle='--',
                 label=r'min'
             )
             ax.plot(
                 range(epoch),
-                [torch.median(betas[i]) for i in range(epoch)],
+                [torch.median(betas[i]).cpu() for i in range(epoch)],
                 label=r'median'
             )
             ax.plot(
                 range(epoch),
-                [max(betas[i]) for i in range(epoch)],
+                [betas[i].max().cpu() for i in range(epoch)],
                 linestyle='--',
                 label=r'max'
             )
@@ -1064,24 +1186,24 @@ def trainer_tempered_annealing(
             )
             ax.plot(
                 range(epoch),
-                [
-                    torch.mean(test_efficiencies[i]) - torch.std(test_efficiencies[i])
-                    for i in range(epoch)
-                ],
-                label=r'mean - 1 std'
-            )
-            ax.plot(
-                range(epoch),
-                [torch.mean(test_efficiencies[i]) for i in range(epoch)],
+                [np.mean(test_efficiencies[i]) for i in range(epoch)],
                 label=r'mean'
             )
             ax.plot(
                 range(epoch),
                 [
-                    torch.mean(test_efficiencies[i]) + torch.std(test_efficiencies[i])
+                    np.mean(test_efficiencies[i]) + np.std(test_efficiencies[i])
                     for i in range(epoch)
                 ],
                 label=r'mean + 1 std'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    np.mean(test_efficiencies[i]) + 2 * np.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 2 std'
             )
             ax.plot(
                 range(epoch),
@@ -1089,6 +1211,7 @@ def trainer_tempered_annealing(
                 linestyle='--',
                 label=r'max'
             )
+            ax.legend()
             fig.savefig(f'{save}_test_efficiencies.png')
             plt.close() 
             
