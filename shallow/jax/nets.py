@@ -21,20 +21,20 @@ def mae(model, x, y, key=None):
     return jnp.mean(jnp.abs(y - model(x, key=key)))
 
 
-def ce(model, x, y):
+def ce(model, x, y, key=None):
     return -jnp.sum(y * jnp.log(model(x)))
 
 
-def bce(model, x, y):
+def bce(model, x, y, key=None):
     q = model(x)
     return -(y * jnp.log(q) + (1 - y) * jnp.log(1 - q))
 
 
-def kl(model, x, y):
+def kl(model, x, y, key=None):
     return jnp.sum(y * (jnp.log(y) - jnp.log(model(x))))
 
 
-def bkl(model, x, y):
+def bkl(model, x, y, key=None):
     q = model(x)
     return (
         + y * (jnp.log(y) - jnp.log(q))
@@ -42,7 +42,7 @@ def bkl(model, x, y):
         )
 
 
-def js(model, x, y):
+def js(model, x, y, key=None):
     q = model(x)
     m = 0.5 * (y + q)
     return 0.5 * jnp.sum(
@@ -52,7 +52,7 @@ def js(model, x, y):
         )
 
 
-def bjs(model, x, y):
+def bjs(model, x, y, key=None):
     q = model(x)
     m = 0.5 * (y + q)
     return 0.5 * (
@@ -89,8 +89,9 @@ def trainer(
         loss_fn = mse
     def loss_vmap(params, x, y, key=None):
         model = equinox.combine(params, static)
-        loss_model = partial(loss_fn, model, key=key)
-        return jax.vmap(loss_model)(x, y)
+        # loss_model = partial(loss_fn, model, key=key)
+        # return jax.vmap(loss_model)(x, y)
+        return loss_fn(model, x, y, key=key)
     def loss_batch(params, x, y, key=None):
         return loss_vmap(params, x, y, key=key).mean()
     loss_and_grad = jax.value_and_grad(loss_batch)
@@ -106,7 +107,7 @@ def trainer(
             assert 0 < valid < 1
             nv = max(int(valid * xt.shape[0]), 1)
             key, key_ = jax.random.split(key)
-            shuffle = jax.random.permutation(key_, x.shape[0])
+            shuffle = jax.random.permutation(key_, xt.shape[0])
             xv = xt[shuffle][:nv]
             yv = yt[shuffle][:nv]
             xt = xt[shuffle][nv:]
