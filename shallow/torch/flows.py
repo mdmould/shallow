@@ -1255,3 +1255,351 @@ def trainer_tempered_annealing(
                 
     return model, losses
 
+
+def trainer_alpha_divergence(
+    model,
+    inputs,
+    contexts=None,
+    log_prob=None,
+    inputs_valid=None,
+    contexts_valid=None,
+    log_prob_valid=None,
+    log_prob_test=None,  # for computing reweighting efficiencies
+    inputs_test=None,    # associated w/ prev argument
+    contexts_test=None,  # associated w/ prev argument
+    loss=None,
+    optimizer='adam',
+    learning_rate=1e-3,
+    weight_decay=0,
+    epochs=1,
+    batch_size=None,
+    batch_size_valid='train',
+    shuffle=True,
+    reduce=None,
+    stop=None,
+    stop_if_inf=True,
+    verbose=True,
+    save=None,
+    seed=None,
+    print_to_file=False,
+    alpha=2
+    ):
+    
+    import matplotlib.pyplot as plt
+        
+    if seed is not None:
+        torch.manual_seed(seed)
+        
+    model.to(device)
+    
+    inputs = torch.as_tensor(inputs, dtype=torch.float32, device=cpu)
+    if inputs.ndim == 1:
+        inputs = inputs[..., None]
+        
+    conditional = False
+    if contexts is not None:
+        conditional = True
+        
+        contexts = torch.as_tensor(contexts, dtype=torch.float32, device=cpu)
+        if contexts.ndim == 1:
+            contexts = contexts[..., None]
+        assert contexts.shape[0] == inputs.shape[0]
+        
+    validate = False
+    if inputs_valid is not None:
+        validate = True
+        
+        inputs_valid = torch.as_tensor(
+            inputs_valid, dtype=torch.float32, device=cpu,
+            )
+        if inputs_valid.ndim == 1:
+            inputs_valid = inputs_valid[..., None]
+        assert inputs_valid.shape[-1] == inputs.shape[-1]
+                        
+        if conditional:
+            assert contexts_valid is not None
+            
+            contexts_valid = torch.as_tensor(
+                contexts_valid, dtype=torch.float32, device=cpu,
+                )
+            if contexts_valid.ndim == 1:
+                contexts_valid = contexts_valid[..., None]
+            assert contexts_valid.shape[0] == inputs_valid.shape[0]
+            assert contexts_valid.shape[-1] == contexts.shape[-1]
+            
+            if (batch_size_valid is None or
+                ((batch_size_valid == 'train') and (batch_size is None))
+                ):
+                contexts_valid = contexts_valid[None, ...]
+            else:
+                if batch_size_valid == 'train':
+                    batch_size_valid = batch_size
+                contexts_valid = contexts_valid.split(batch_size_valid)
+                
+        if (batch_size_valid is None or
+            ((batch_size_valid == 'train') and (batch_size is None))
+            ):
+            inputs_valid = inputs_valid[None, ...]
+            log_prob_valid = log_prob_valid[None, ...]
+        else:
+            raise ValueError('not supported')
+            if batch_size_valid == 'train':
+                batch_size_valid = batch_size
+            inputs_valid = inputs_valid.split(batch_size_valid)
+                
+    if not shuffle:
+        if batch_size is None:
+            inputs = inputs[None, ...]
+        else:
+            inputs = inputs.split(batch_size)
+            
+        if conditional:
+            if batch_size is None:
+                contexts = contexts[None, ...]
+            else:
+                contexts = contexts.split(batch_size)
+                
+    if loss is None:
+        def loss(i, c, log_prob):
+            return ((
+                -log_prob**(alpha - 1)
+                * model.log_prob(i, context=c)**(1 - alpha)
+            ).mean() / alpha / (1 - alpha))
+    assert callable(loss)
+    
+    optimizer = get_optimizer(optimizer)(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay,
+    )
+    
+    best_model = deepcopy(model.state_dict())
+    best_epoch = 0
+    best_loss = float('inf')
+    losses = {'train': []}
+    if validate:
+        losses['valid'] = []
+    if reduce is not None:
+           epoch_reduce = 0
+
+    test_efficiencies = []
+
+    epoch_loop = range(1, epochs + 1)
+    # if verbose:
+    epoch_loop = tqdm(epoch_loop, position=0)
+    for epoch in epoch_loop:
+        # if verbose:
+        #     print(f'Epoch {epoch}')
+        
+        # Training
+        model = model.train()
+        
+        if shuffle:
+            perm = torch.randperm(inputs.shape[0])
+            
+            inputs_train = inputs[perm]
+            log_prob_train = inputs[perm]
+            if batch_size is None:
+                inputs_train = inputs_train[None, ...]
+                log_prob_train = log_prob_train[None, ...]
+            else:
+                inputs_train = inputs_train.split(batch_size)
+                log_prob_train = log_prob_train.split(batch_size)
+                
+            if conditional:
+                contexts_train = contexts[perm]
+                if batch_size is None:
+                    contexts_train = contexts_train[None, ...]
+                else:
+                    contexts_train = contexts_train.split(batch_size)
+            
+        else:
+            inputs_train = inputs
+            if conditional:
+                contexts_train = contexts
+                
+        n = len(inputs_train)
+        if conditional:
+            loop = zip(inputs_train, contexts_train, log_prob_train)
+        else:
+            loop = inputs_train
+        if verbose:
+            if print_to_file:
+                loop = tqdm(loop, total=n, desc='Train batch')
+            else:
+                loop = tqdm(loop, total=n, desc='Train batch', position=1, leave=False)
+            
+        loss_train = 0
+        for batch in loop:
+            optimizer.zero_grad()
+            
+            if conditional:
+                i, c, lnp = batch
+                loss_step = loss(i.to(device), c.to(device), lnp.to(device))
+            else:
+                loss_step = loss(batch.to(device))
+                
+            if loss_step.isinf():
+                loss_is_inf = True
+                if stop_if_inf:
+                    break
+            else:
+                loss_is_inf = False
+                loss_step.backward()
+                optimizer.step()
+                loss_train += loss_step.item()
+
+        loss_train /= n
+        losses['train'].append(loss_train)
+        loss_track = loss_train
+        
+        # Validation
+        if validate:
+            model = model.eval()
+            with torch.inference_mode():
+                
+                n = len(inputs_valid)
+                if conditional:
+                    loop = zip(inputs_valid, contexts_valid, log_prob_train)
+                else:
+                    loop = inputs_valid
+                if verbose:
+                    if print_to_file:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1)
+                    else:
+                        loop = tqdm(loop, total=n, desc='Valid batch', position=1, leave=False)
+                    
+                loss_valid = 0
+                for batch in loop:
+                    
+                    if conditional:
+                        i, c, lnprob = batch
+                        loss_step = loss(i.to(device), c.to(device), lnprob.to(device))
+                    else:
+                        loss_step = loss(batch.to(device))
+                        
+                    if loss_step.isinf():
+                        loss_is_inf = True
+                        if stop_if_inf:
+                            break
+                    else:
+                        loss_is_inf = False
+                        loss_valid += loss_step.item()
+
+                loss_valid /= n
+                losses['valid'].append(loss_valid)
+                loss_track = loss_valid
+
+        # compute efficiency of reweighing to test set
+        # note: all thsi should be shaped like (ntest, nsamples)
+        print('inputs_test.shape =', inputs_test.shape)
+        print('contexts_test.shape =', contexts_test.shape)
+
+        model_log_prob = model.log_prob(
+            inputs_test.reshape(inputs_test.shape[0] * inputs_test.shape[1], inputs_test.shape[2]),
+            context=contexts_test.reshape(contexts_test.shape[0] * contexts_test.shape[1], contexts_test.shape[2])
+        ).reshape(inputs_test.shape[:2])
+
+        print('model_log_prob.shape =', model_log_prob.shape)
+
+        test_ln_weights = (log_prob_test - model_log_prob).cpu().detach().numpy()
+        test_ln_weights -= logsumexp(test_ln_weights) # normalize weight
+        test_weights = np.exp(test_ln_weights)
+
+        if np.isinf(test_weights).any() or np.isnan(test_weights).any():
+            raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
+
+        test_eff = np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
+
+        if np.isnan(test_eff).any():
+            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
+            test_eff[np.isnan(test_eff)] = 0
+        
+        test_efficiencies.append(test_eff)
+
+        if stop_if_inf and loss_is_inf:
+            print('nan/inf loss, stopping')
+            break
+         
+        if save is not None:
+            current_model = deepcopy(model.state_dict())
+            torch.save(current_model, f'{save}_latest.pt')
+            np.save(f'{save}.npy', losses, allow_pickle=True)
+            fig, ax = plot_loss(losses, fname=f'{save}.png')
+            plt.close()
+
+            np.save(
+                f'{save}_test_efficiencies.npy',
+                test_efficiencies,
+                allow_pickle=True
+            )
+
+            # plot min, max, 1sigma, and mean efficiencies
+            fig, ax = plt.subplots()
+            ax.set_xlabel('epoch')
+            ax.set_ylabel(r'test reweighting efficiency')
+            ax.plot(
+                range(epoch),
+                [min(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'min'
+            )
+            ax.plot(
+                range(epoch),
+                [np.mean(test_efficiencies[i]) for i in range(epoch)],
+                label=r'mean'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    np.mean(test_efficiencies[i]) + np.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 1 std'
+            )
+            ax.plot(
+                range(epoch),
+                [
+                    np.mean(test_efficiencies[i]) + 2 * np.std(test_efficiencies[i])
+                    for i in range(epoch)
+                ],
+                label=r'mean + 2 std'
+            )
+            ax.plot(
+                range(epoch),
+                [max(test_efficiencies[i]) for i in range(epoch)],
+                linestyle='--',
+                label=r'max'
+            )
+            ax.legend()
+            fig.savefig(f'{save}_test_efficiencies.png')
+            plt.close()
+            
+        if loss_track < best_loss:
+            best_epoch = epoch
+            best_loss = loss_track
+            best_model = deepcopy(model.state_dict())
+            if save is not None:
+                torch.save(best_model, f'{save}.pt')
+                
+        if reduce is not None:
+            if epoch - best_epoch == 0:
+                epoch_reduce = epoch
+            if epoch - epoch_reduce > reduce:
+                epoch_reduce = epoch
+                if verbose:
+                    print(f'No improvement for {reduce} epochs, reducing lr')
+                for group in optimizer.param_groups:
+                    group['lr'] /= 2
+                    
+        if stop is not None:
+            if epoch - best_epoch > stop:
+                if verbose:
+                    print(f'No improvement for {stop} epochs, stopping')
+                break
+                
+    if verbose and save:
+        print(save)
+        
+    model.load_state_dict(best_model)
+    model.eval()
+                
+    return model, losses
