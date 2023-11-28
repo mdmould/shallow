@@ -109,7 +109,7 @@ def get_normer(norms):
 ## TODO: bounder bijection in case of no bounds
 def get_flow(flow, bounds=[None], norms=None):
     bounder = Stack([get_bounder(bound) for bound in bounds])
-    if norms:
+    if norms is not None:
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
         bounder = Chain([denormer, bounder])
