@@ -933,7 +933,7 @@ def trainer_tempered_annealing(
     if validate:
         losses['valid'] = []
     if reduce is not None:
-           epoch_reduce = 0
+        epoch_reduce = 0
 
     betas = []
     test_efficiencies = []
@@ -956,10 +956,10 @@ def trainer_tempered_annealing(
 
         # compute the inverse temperature this epoch
         beta = (np.exp(-epoch / E) * A + 1)**(-1) # (number of injections, )
-        beta = torch.tile(beta, (nsamples,1)).T # (number of injections, number of samples)
+        beta = torch.tile(beta, (nsamples, 1)).T # (number of injections, number of samples)
 
         beta_valid = (np.exp(-epoch / E) * A_valid + 1)**(-1)
-        beta_valid = torch.tile(beta_valid, (nsamples,1)).T
+        beta_valid = torch.tile(beta_valid, (nsamples, 1)).T
 
         print(f'beta_train shape = {beta.shape}')
         print(f'beta_valid shape = {beta_valid.shape}')
@@ -980,7 +980,7 @@ def trainer_tempered_annealing(
 
         # tempering is equivalent to weighted loss function
         if (beta < 1).any():
-            ln_weights_train = (beta - 1) * log_prob_train # (number of injections, number of samples)
+            ln_weights_train = (beta - 1) * log_prob_train  # (number of injections, number of samples)
             print('ln_weights_train min, max=', ln_weights_train.min(), ln_weights_train.max())            
             weights_train = torch.exp(ln_weights_train)
 
@@ -998,12 +998,19 @@ def trainer_tempered_annealing(
 #        weights_train = torch.ones(log_prob_train.shape)
 #        weights_valid = torch.ones(log_prob_valid.shape)
 
+        print('inputs.shape =', inputs.shape)
+        print('inpust_valid.shape =', inputs_valid.shape)
+        print('weights_train.shape (before) =', weights_train.shape)
+        print('weights_valid.shape (before) =', weights_valid.shape)
+        weights_train = weights_train.reshape(inputs.shape[:-1])
+        weights_valid = weights_valid.reshape(inputs_valid.shape[:-1])
+        print('weights_train.shape (after) =', weights_train.shape)
+        print('weights_valid.shape (after) =', weights_valid.shape) 
 
-        weights_train = weights_train.reshape(inputs.shape[0])
-        weights_valid = weights_valid.reshape(inputs_valid.squeeze().shape[0])
-        
         print('weights_train min, max=', weights_train.min(), weights_train.max())
         print('weights_valid min, max=', weights_valid.min(), weights_valid.max())
+
+        weights_train_unsplit = deepcopy(weights_train)
 
         if shuffle:
             perm = torch.randperm(inputs.shape[0])
@@ -1070,8 +1077,9 @@ def trainer_tempered_annealing(
             with torch.inference_mode():
                 
                 n = len(inputs_valid)
+                print(n, inputs_valid.shape)
                 if conditional:
-                    loop = zip(inputs_valid, contexts_valid, weights_valid)
+                    loop = zip(inputs_valid, contexts_valid, weights_valid)#weights_train_unsplit[None,:])
                 else:
                     loop = inputs_valid
                 if verbose:
@@ -1086,6 +1094,7 @@ def trainer_tempered_annealing(
                     
                     if conditional:
                         i, c, w = batch
+                        print('i, c, w shapes=', i.shape, c.shape, w.shape)
                         loss_step = loss(i.to(device), weights=w.to(device), c=c.to(device))
                         print('loss_step =', loss_step)
                     else:
