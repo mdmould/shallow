@@ -74,7 +74,8 @@ def trainer(
     patience=None,
     stop_if_inf=True,
     lr=1e-3,
-    wd=0,
+    wd=None,
+    opt=None,
     loss_fn=None,
     print_batch=False,
     print_epoch=True,
@@ -82,18 +83,30 @@ def trainer(
     ):
 
     params, static = equinox.partition(model, filter_spec)
-    opt = optax.adamw(learning_rate=lr, weight_decay=wd)
+    if opt is None:
+        if wd is None:
+            opt = optax.adam(learning_rate=lr)
+        else:
+            opt = optax.adamw(learning_rate=lr, weight_decay=wd)
+    elif callable(opt):
+        if wd is None:
+            opt = opt(learning_rate=lr)
+        else:
+            opt = opt(learning_rate=lr, weight_decay=wd)
     state = opt.init(params)
 
     if loss_fn is None:
         loss_fn = mse
-    def loss_vmap(params, x, y, key=None):
-        model = equinox.combine(params, static)
-        # loss_model = partial(loss_fn, model, key=key)
-        # return jax.vmap(loss_model)(x, y)
-        return loss_fn(model, x, y, key=key)
+    # def loss_vmap(params, x, y, key=None):
+    #     model = equinox.combine(params, static)
+    #     # loss_model = partial(loss_fn, model, key=key)
+    #     # return jax.vmap(loss_model)(x, y)
+    #     return loss_fn(model, x, y, key=key)
+    # def loss_batch(params, x, y, key=None):
+    #     return loss_vmap(params, x, y, key=key).mean()
     def loss_batch(params, x, y, key=None):
-        return loss_vmap(params, x, y, key=key).mean()
+        model = equinox.combine(params, static)
+        return loss_fn(model, x, y, key=key)
     loss_and_grad = jax.value_and_grad(loss_batch)
 
     xt, yt = train
@@ -269,13 +282,13 @@ def trainer(
 
     pred_patience = lambda epoch, best_epoch: epoch > best_epoch + patience - 1
     pred_inf = lambda loss: jnp.logical_not(jnp.isfinite(loss))
-    if patience is not None and not stop_if_inf:
+    if patience and not stop_if_inf:
         def pred_fn(loss, epoch, best_epoch):
             return pred_patience(epoch, best_epoch)
-    elif patience is None and stop_if_inf:
+    elif not patience and stop_if_inf:
         def pred_fn(loss, epoch, best_epoch):
             return pred_inf(loss)
-    elif patience is not None and stop_if_inf:
+    elif patience and stop_if_inf:
         def pred_fn(loss, epoch, best_epoch):
             return jnp.logical_or(
                 pred_patience(epoch, best_epoch), pred_inf(loss),
@@ -355,22 +368,19 @@ def trainer(
 
     model = equinox.combine(best_params, static)
 
-    if patience is not None or stop_if_inf:
+    if stop:
         losses = jnp.array(losses)
-        if jnp.any(~jnp.isfinite(losses)):
-            cut = jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()
-            if patience is not None:
-                if (
-                    cut == best_epoch + patience + 1 and
-                    jnp.isnan(losses[:, cut]).all()
-                    ):
-                    print('Stopped: patience reached')
-                else:
-                    print('Stopped: loss is not finite')
-            else:
-                print('Stopped: loss is not finite')
-            losses = losses[:, :cut]
-    losses = {k: v for k, v in zip(['train', 'valid'], losses)}
+        cut = jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()
+        if (
+            patience and
+            cut == best_epoch + patience + 1 and
+            jnp.isnan(losses[:, cut]).all()
+            ):
+            print('Stopped: patience reached')
+        else:
+            print('Stopped: loss is not finite')
+        losses = losses[:, :cut]
+    losses = {k: v for k, v in zip(('train', 'valid'), losses)}
     
     return model, losses
 

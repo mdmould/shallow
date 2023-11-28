@@ -242,7 +242,7 @@ def trainer(
             opt = optax.adam(learning_rate=lr)
         else:
             opt = optax.adamw(learning_rate=lr, weight_decay=wd)
-    if callable(opt):
+    elif callable(opt):
         if wd is None:
             opt = opt(learning_rate=lr)
         else:
