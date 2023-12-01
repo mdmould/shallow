@@ -106,16 +106,19 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
-## TODO: bounder bijection in case of no bounds
-def get_flow(flow, bounds=[None], norms=None):
+def get_pre(bounds=[None], norms=None):
     bounder = Stack([get_bounder(bound) for bound in bounds])
     if norms is not None:
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
         bounder = Chain([denormer, bounder])
-    base_dist = flow.base_dist
-    bijection = Chain([flow.bijection, bounder])
-    return Transformed(base_dist, bijection)
+    return bounder
+
+
+## TODO: bounder bijection in case of no bounds
+def get_flow(flow, bounds=[None], norms=None):
+    bijection = Chain([flow.bijection, get_pre(bounds, norms)])
+    return Transformed(flow.base_dist, bijection)
 
 
 def get_filter(flow, filter_spec=equinox.is_inexact_array):
@@ -197,7 +200,7 @@ def trainer(
         train = xt,
         conditional = False
 
-    if valid:
+    if valid is not None:
         if type(valid) is float:
             assert 0 < valid < 1
             nv = max(int(valid * xt.shape[0]), 1)
