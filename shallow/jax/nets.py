@@ -82,6 +82,7 @@ def trainer(
     filter_spec=equinox.is_inexact_array,
     ):
 
+    model = equinox.nn.inference_mode(model, False)
     params, static = equinox.partition(model, filter_spec)
     if opt is None:
         if wd is None:
@@ -125,11 +126,7 @@ def trainer(
             yv = yt[shuffle][:nv]
             xt = xt[shuffle][nv:]
             yt = yt[shuffle][nv:]
-            
     nt = xt.shape[0]
-    if batch_size is None or batch_size > nt:
-        batch_size = nt
-    nbt, remt = divmod(nt, batch_size)
 
     def train_step(carry, batch):
         key, params, state = carry
@@ -155,6 +152,9 @@ def trainer(
         return valid_step(carry, batch)
 
     if all_batches:
+        if batch_size is None or batch_size > nt:
+            batch_size = nt
+        nbt, remt = divmod(nt, batch_size)
 
         if nbt == 1:
             def train_scan(key, params, state, x, y):
@@ -367,6 +367,7 @@ def trainer(
     best_epoch, best_loss, best_params = best
 
     model = equinox.combine(best_params, static)
+    model = equinox.nn.inference_mode(model, True)
 
     if stop:
         losses = jnp.array(losses)

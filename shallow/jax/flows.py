@@ -239,6 +239,7 @@ def trainer(
         vbatch_size = min(batch_size, nv)
         nbv, remv = divmod(nv, vbatch_size)
 
+    flow = equinox.nn.inference_model(flow, False)
     params, static = equinox.partition(flow, filter_spec)
     if opt is None:
         if wd is None:
@@ -472,6 +473,7 @@ def trainer(
     best_epoch, best_loss, best_params = best
 
     flow = equinox.combine(best_params, static)
+    flow = equinox.nn.inference_mode(flow, True)
 
     if stop:
         losses = jnp.array(losses)
