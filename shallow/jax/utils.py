@@ -2,6 +2,15 @@ import jax
 import jax.numpy as jnp
 
 
+class Seed:
+    def __init__(self, seed=0):
+        self._seed = int(seed)
+        self.key = jax.random.PRNGKey(seed)
+    def __call__(self, num=2):
+        self.key, *keys = jax.random.split(self.key, num)
+        return jnp.array(keys).squeeze()
+
+
 def params_to_array(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
     flat_arrays = list(map(jnp.ravel, arrays))
