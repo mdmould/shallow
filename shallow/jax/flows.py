@@ -229,15 +229,7 @@ def trainer(
             xv = jnp.asarray(valid)
             valid = xv,
         assert xv.shape[1:] == xt.shape[1:]
-
     nt = xt.shape[0]
-    if batch_size is None:
-        batch_size = nt
-    nbt, remt = divmod(nt, batch_size)
-    if valid:
-        nv = xv.shape[0]
-        vbatch_size = min(batch_size, nv)
-        nbv, remv = divmod(nv, vbatch_size)
 
     flow = equinox.nn.inference_model(flow, False)
     params, static = equinox.partition(flow, filter_spec)
@@ -277,6 +269,13 @@ def trainer(
         return valid_step(params, x)
 
     if all_batches:
+        if batch_size is None or batch_size > nt:
+            batch_size = nt
+        nbt, remt = divmod(nt, batch_size)
+        if valid:
+            nv = xv.shape[0]
+            vbatch_size = min(batch_size, nv)
+            nbv, remv = divmod(nv, vbatch_size)
     
         def get_batch(key, x, batch_size):
             shuffle = jax.random.permutation(key, x[0].shape[0])
