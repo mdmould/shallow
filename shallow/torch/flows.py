@@ -2,6 +2,8 @@ import numpy as np
 from tqdm.auto import tqdm
 from copy import deepcopy
 import torch
+from torch import Tensor
+from typing import Iterable, Optional, Tuple, Union
 from scipy.special import logsumexp
 
 from nflows.distributions import StandardNormal
@@ -87,6 +89,55 @@ class FeaturewiseTransform(Transform):
         return self._map(self.inverses, inputs, context=context)
 
 
+class TrainableAffineTransform(Transform):
+    """Forward transform X = X * scale + shift.
+
+        We initialize it to be identity.
+
+        inputs: number of input dimensions
+        contexts: number of context dimensions
+    """
+
+    def __init__(self, inputs):
+        super().__init__()
+
+        self._scale = torch.nn.Parameter(torch.eye(inputs)[None, ...])
+        self._shift = torch.nn.Parameter(torch.zeros(1, inputs))
+
+    # TODO: remove the .numel thing
+    def _batch_logabsdet(self, batch_shape: Iterable[int]) -> Tensor:
+        """Return log abs det with input batch shape."""
+
+        logabsdet = torch.log(torch.abs(torch.det(self._scale.squeeze())))
+        return logabsdet
+
+    def forward(self, inputs: Tensor, context=Optional[Tensor]) -> Tuple[Tensor]:
+        batch_size, *batch_shape = inputs.size()
+
+        # RuntimeError here means shift/scale not broadcastable to input.
+        outputs = torch.bmm(
+            self._scale.expand(batch_size, -1, -1),
+            inputs[..., None]
+        ).squeeze()
+        outputs += self._shift.expand(batch_size, -1)
+
+        logabsdet = self._batch_logabsdet(batch_shape).expand(batch_size)
+
+        return outputs, logabsdet
+
+    def inverse(self, inputs: Tensor, context=Optional[Tensor]) -> Tuple[Tensor]:
+        batch_size, *batch_shape = inputs.size()
+
+        outputs = (inputs - self._shift.expand(batch_size, -1))
+        outputs = torch.bmm(
+            torch.linalg.inv(self._scale.squeeze()).expand(batch_size, -1, -1),
+            outputs[..., None]
+        ).squeeze()
+
+        logabsdet = -self._batch_logabsdet(batch_shape).expand(batch_size)
+
+        return outputs, logabsdet
+
 # Wrapper inspired by features from sbi and glasflow
 # https://github.com/mackelab/sbi/blob/main/sbi/neural_nets/flow.py
 # https://github.com/igr-ml/glasflow/blob/main/src/glasflow/flows/coupling.py
@@ -116,6 +167,7 @@ class BaseFlow(Flow):
         batchnorm_between=False, # Batch normalization between flow layers
         permutation=None, # None, 'random', 'reverse', or list
         linear=None, # None or 'lu'
+        affine=None, # None or True
         embedding=None, # Network to embed contexts
         distribution=None, # None (standard normal) or nflows Distribution
         eps=1e-6, # fudge-factor for numerical error when performing an inverse sigmoid transform on bounded parameters
@@ -140,7 +192,7 @@ class BaseFlow(Flow):
                 
         # Main transforms in the flow
         main_transform = self._get_main_transform(
-            transforms, permutation, linear, batchnorm_between, kwargs,
+            transforms, permutation, linear, batchnorm_between, affine, kwargs,
         )
 
         transform = CompositeTransform([pre_transform, main_transform])
@@ -264,7 +316,7 @@ class BaseFlow(Flow):
         return pre_transform
     
     def _get_main_transform(
-        self, transforms, permutation, linear, batchnorm_between, kwargs,
+        self, transforms, permutation, linear, batchnorm_between, affine, kwargs,
         ):
         
         main_transforms = []
@@ -287,6 +339,11 @@ class BaseFlow(Flow):
                     main_transforms.append(
                         LULinear(self.inputs, identity_init=True),
                         )
+                    
+            if affine is not None:
+                main_transforms.append(
+                    TrainableAffineTransform(self.inputs)
+                )
                     
             # Main bijection in this flow layers
             main_transforms.append(self._get_transform(**kwargs))
@@ -346,7 +403,7 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
 class CouplingNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
-        self, mask='mid', bins=5, tails='linear', bound=5.0,
+        self, mask='mid', bins=5, tails='linear', bound=5.0, enable_identity_init=False
     ):
         
         if type(mask) is str:
@@ -397,6 +454,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
             num_bins=bins,
             tails=tails,
             tail_bound=bound,
+            enable_identity_init=enable_identity_init
         )
 
 
@@ -490,6 +548,7 @@ def trainer(
     epochs=1,
     batch_size=None,
     batch_size_valid='train',
+    batch_size_test=None,
     shuffle=True,
     reduce=None,
     stop=None,
@@ -498,6 +557,7 @@ def trainer(
     save=None,
     seed=None,
     print_to_file=False,
+    nsamples_test=None,
     ):
     
     import matplotlib.pyplot as plt
@@ -559,7 +619,17 @@ def trainer(
             if batch_size_valid == 'train':
                 batch_size_valid = batch_size
             inputs_valid = inputs_valid.split(batch_size_valid)
-                
+
+    if inputs_test is not None:
+        if batch_size_test is None: #or (batch_size_test == 'train' and batch_size is None):
+            inputs_test = inputs_test[None, ...]
+            contexts_test = contexts_test[None, ...]
+            log_prob_test = log_prob_test[None, ...]
+        else:
+            inputs_test = inputs_test.split(batch_size)
+            contexts_test = contexts_test.split(batch_size)
+            log_prob_test = log_prob_test.split(batch_size)
+
     if not shuffle:
         if batch_size is None:
             inputs = inputs[None, ...]
@@ -590,6 +660,7 @@ def trainer(
            epoch_reduce = 0
 
     test_efficiencies = []
+    all_ln_test_weights = []
 
     epoch_loop = range(1, epochs + 1)
     # if verbose:
@@ -696,35 +767,35 @@ def trainer(
 
         # compute efficiency of reweighing to test set
         # note: all thsi should be shaped like (ntest, nsamples)
-        print('inputs_test.shape =', inputs_test.shape)
-        print('contexts_test.shape =', contexts_test.shape)
+        #print('inputs_test.shape =', inputs_test.shape)
+        #print('contexts_test.shape =', contexts_test.shape)
 
-        model_log_prob = model.log_prob(
-            inputs_test.reshape(inputs_test.shape[0] * inputs_test.shape[1], inputs_test.shape[2]),
-            context=contexts_test.reshape(contexts_test.shape[0] * contexts_test.shape[1], contexts_test.shape[2])
-        ).reshape(inputs_test.shape[:2])
+        if inputs_test is not None:
+            loop_test = tqdm(zip(inputs_test, contexts_test, log_prob_test))
+            test_ln_weights = np.array([])
+            for batch in loop_test:
+                i, c, lnprob = batch
+                model_log_prob = model.log_prob(i, context=c).reshape(ntest, nsamples_test)
 
-        print('model_log_prob.shape =', model_log_prob.shape)
+                ln_weights = (lnprob - model_log_prob).cpu().detach().numpy()
 
-        test_ln_weights = (log_prob_test - model_log_prob).cpu().detach().numpy()
-        test_ln_weights -= logsumexp(test_ln_weights) # normalize weight
-        test_weights = np.exp(test_ln_weights)
+                test_ln_weights = np.concatenate((
+                    test_ln_weights,
+                    ln_weights
+                ))
 
-        if np.isinf(test_weights).any() or np.isnan(test_weights).any():
-            raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
-
-        test_eff = np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
-
-        if np.isnan(test_eff).any():
-            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
-            test_eff[np.isnan(test_eff)] = 0
-        
-        test_efficiencies.append(test_eff)
+            ln_neff = (
+                2 * logsumexp(test_ln_weights, axis=1)
+                - logsumexp(2 * test_ln_weights, axis=1)
+            )
+            ln_test_eff = ln_neff - np.log(nsamples_test)
+            all_ln_test_weights.append(test_ln_weights)
+            test_efficiencies.append(ln_test_eff)
 
         if stop_if_inf and loss_is_inf:
             print('nan/inf loss, stopping')
             break
-         
+
         if save is not None:
             current_model = deepcopy(model.state_dict())
             torch.save(current_model, f'{save}_latest.pt')
@@ -738,54 +809,57 @@ def trainer(
                 allow_pickle=True
             )
 
-            # plot min, max, 1sigma, and mean efficiencies
-            fig, ax = plt.subplots()
-            ax.set_xlabel('epoch')
-            ax.set_ylabel(r'test reweighting efficiency')
-            ax.plot(
-                range(epoch),
-                [min(test_efficiencies[i]) for i in range(epoch)],
-                linestyle='--',
-                label=r'min'
-            )
-            ax.plot(
-                range(epoch),
-                [np.mean(test_efficiencies[i]) for i in range(epoch)],
-                label=r'mean'
-            )
-            ax.plot(
-                range(epoch),
-                [
-                    np.mean(test_efficiencies[i]) + np.std(test_efficiencies[i])
-                    for i in range(epoch)
-                ],
-                label=r'mean + 1 std'
-            )
-            ax.plot(
-                range(epoch),
-                [
-                    np.mean(test_efficiencies[i]) + 2 * np.std(test_efficiencies[i])
-                    for i in range(epoch)
-                ],
-                label=r'mean + 2 std'
-            )
-            ax.plot(
-                range(epoch),
-                [max(test_efficiencies[i]) for i in range(epoch)],
-                linestyle='--',
-                label=r'max'
-            )
-            ax.legend()
-            fig.savefig(f'{save}_test_efficiencies.png')
-            plt.close()
-            
+            if len(test_efficiencies) > 0:
+                # plot min, max, 1sigma, and mean efficiencies
+                fig, ax = plt.subplots()
+                ax.set_xlabel('epoch')
+                ax.set_ylabel(r'ln test reweighting efficiency')
+                ax.plot(
+                    range(epoch),
+                    [min(test_efficiencies[i]) for i in range(epoch)],
+                    linestyle='--',
+                    label=r'min'
+                )
+                ax.plot(
+                    range(epoch),
+                    [np.mean(test_efficiencies[i]) for i in range(epoch)],
+                    label=r'mean'
+                )
+                ax.plot(
+                    range(epoch),
+                    [
+                        np.mean(test_efficiencies[i]) + np.std(test_efficiencies[i])
+                        for i in range(epoch)
+                    ],
+                    label=r'mean + 1 std'
+                )
+                ax.plot(
+                    range(epoch),
+                    [
+                        np.mean(test_efficiencies[i]) + 2 * np.std(test_efficiencies[i])
+                        for i in range(epoch)
+                    ],
+                    label=r'mean + 2 std'
+                )
+                ax.plot(
+                    range(epoch),
+                    [max(test_efficiencies[i]) for i in range(epoch)],
+                    linestyle='--',
+                    label=r'max'
+                )
+                ax.axhline(y = 0, linestyle='--', color='black')
+                ax.axhline(y = np.log(0.1), linestyle='--', color='black')
+                ax.legend()
+                fig.savefig(f'{save}_test_efficiencies.png')
+                plt.close()
+
         if loss_track < best_loss:
             best_epoch = epoch
             best_loss = loss_track
             best_model = deepcopy(model.state_dict())
             if save is not None:
                 torch.save(best_model, f'{save}.pt')
-                
+     
         if reduce is not None:
             if epoch - best_epoch == 0:
                 epoch_reduce = epoch
@@ -795,20 +869,20 @@ def trainer(
                     print(f'No improvement for {reduce} epochs, reducing lr')
                 for group in optimizer.param_groups:
                     group['lr'] /= 2
-                    
+
         if stop is not None:
             if epoch - best_epoch > stop:
                 if verbose:
                     print(f'No improvement for {stop} epochs, stopping')
                 break
-                
+
     if verbose and save:
         print(save)
-        
+
     model.load_state_dict(best_model)
     model.eval()
-                
-    return model, losses
+
+    return model, losses, test_efficiencies, best_epoch, all_ln_test_weights
 
 def trainer_tempered_annealing(
     model,
@@ -979,6 +1053,7 @@ def trainer_tempered_annealing(
             break
 
         # tempering is equivalent to weighted loss function
+        # TODO: compute weights as (p / pmin)**(beta - 1)
         if (beta < 1).any():
             ln_weights_train = (beta - 1) * log_prob_train  # (number of injections, number of samples)
             print('ln_weights_train min, max=', ln_weights_train.min(), ln_weights_train.max())            
@@ -995,9 +1070,6 @@ def trainer_tempered_annealing(
             weights_train = torch.ones(log_prob_train.shape)
             weights_valid = torch.ones(log_prob_valid.shape)
 
-#        weights_train = torch.ones(log_prob_train.shape)
-#        weights_valid = torch.ones(log_prob_valid.shape)
-
         print('inputs.shape =', inputs.shape)
         print('inpust_valid.shape =', inputs_valid.shape)
         print('weights_train.shape (before) =', weights_train.shape)
@@ -1009,8 +1081,6 @@ def trainer_tempered_annealing(
 
         print('weights_train min, max=', weights_train.min(), weights_train.max())
         print('weights_valid min, max=', weights_valid.min(), weights_valid.max())
-
-        weights_train_unsplit = deepcopy(weights_train)
 
         if shuffle:
             perm = torch.randperm(inputs.shape[0])
@@ -1282,7 +1352,8 @@ def trainer_alpha_divergence(
     save=None,
     seed=None,
     print_to_file=False,
-    alpha=2
+    alpha=2,
+    nsamples_test=None
     ):
     
     import matplotlib.pyplot as plt
@@ -1342,11 +1413,11 @@ def trainer_alpha_divergence(
             inputs_valid = inputs_valid[None, ...]
             log_prob_valid = log_prob_valid[None, ...]
         else:
-            raise ValueError('not supported')
             if batch_size_valid == 'train':
                 batch_size_valid = batch_size
             inputs_valid = inputs_valid.split(batch_size_valid)
-                
+            log_prob_valid = log_prob_valid.split(batch_size_valid)
+
     if not shuffle:
         if batch_size is None:
             inputs = inputs[None, ...]
@@ -1361,16 +1432,17 @@ def trainer_alpha_divergence(
                 
     if loss is None:
         def loss(i, c, log_prob):
+            #print('i, c, log_prob shape=', i.shape, c.shape, log_prob.shape)
             return ((
                 -log_prob**(alpha - 1)
                 * model.log_prob(i, context=c)**(1 - alpha)
             ).mean() / alpha / (1 - alpha))
     assert callable(loss)
-    
+ 
     optimizer = get_optimizer(optimizer)(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay,
     )
-    
+
     best_model = deepcopy(model.state_dict())
     best_epoch = 0
     best_loss = float('inf')
@@ -1381,6 +1453,7 @@ def trainer_alpha_divergence(
            epoch_reduce = 0
 
     test_efficiencies = []
+    all_ln_test_weights = []
 
     epoch_loop = range(1, epochs + 1)
     # if verbose:
@@ -1392,17 +1465,20 @@ def trainer_alpha_divergence(
         # Training
         model = model.train()
         
+        #print('log_prob.shape IN EPOCH LOOP =', log_prob.shape)
+
         if shuffle:
             perm = torch.randperm(inputs.shape[0])
             
             inputs_train = inputs[perm]
-            log_prob_train = inputs[perm]
+            log_prob_train = log_prob[perm]
             if batch_size is None:
                 inputs_train = inputs_train[None, ...]
                 log_prob_train = log_prob_train[None, ...]
             else:
                 inputs_train = inputs_train.split(batch_size)
                 log_prob_train = log_prob_train.split(batch_size)
+                #print('split log_prob_train.shap =', log_prob_train[0].shape)
                 
             if conditional:
                 contexts_train = contexts[perm]
@@ -1433,6 +1509,7 @@ def trainer_alpha_divergence(
             
             if conditional:
                 i, c, lnp = batch
+                #print('lnp.shape =', lnp.shape)
                 loss_step = loss(i.to(device), c.to(device), lnp.to(device))
             else:
                 loss_step = loss(batch.to(device))
@@ -1458,7 +1535,7 @@ def trainer_alpha_divergence(
                 
                 n = len(inputs_valid)
                 if conditional:
-                    loop = zip(inputs_valid, contexts_valid, log_prob_train)
+                    loop = zip(inputs_valid, contexts_valid, log_prob_valid)
                 else:
                     loop = inputs_valid
                 if verbose:
@@ -1490,30 +1567,31 @@ def trainer_alpha_divergence(
 
         # compute efficiency of reweighing to test set
         # note: all thsi should be shaped like (ntest, nsamples)
-        print('inputs_test.shape =', inputs_test.shape)
-        print('contexts_test.shape =', contexts_test.shape)
+        #print('inputs_test.shape =', inputs_test.shape)
+        #print('contexts_test.shape =', contexts_test.shape)
 
         model_log_prob = model.log_prob(
             inputs_test.reshape(inputs_test.shape[0] * inputs_test.shape[1], inputs_test.shape[2]),
             context=contexts_test.reshape(contexts_test.shape[0] * contexts_test.shape[1], contexts_test.shape[2])
         ).reshape(inputs_test.shape[:2])
 
-        print('model_log_prob.shape =', model_log_prob.shape)
+        #print('model_log_prob.shape =', model_log_prob.shape)
 
         test_ln_weights = (log_prob_test - model_log_prob).cpu().detach().numpy()
-        test_ln_weights -= logsumexp(test_ln_weights) # normalize weight
-        test_weights = np.exp(test_ln_weights)
+        ln_neff = (
+            2 * logsumexp(test_ln_weights, axis=1)
+            - logsumexp(2 * test_ln_weights, axis=1)
+        )
+        ln_test_eff = ln_neff - np.log(nsamples_test)
+        all_ln_test_weights.append(test_ln_weights)
 
-        if np.isinf(test_weights).any() or np.isnan(test_weights).any():
-            raise ValueError('found inf/nan in the weights! regularize your weights, dummy')
+        # TODO: at the end of training, have the flow predict for the best & worst example
 
-        test_eff = np.mean(test_weights, axis=1)**2 / np.mean(test_weights**2, axis=1) # (ntest,)
-
-        if np.isnan(test_eff).any():
-            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
-            test_eff[np.isnan(test_eff)] = 0
+#        if np.isnan(test_eff).any():
+#            print('WARNING: found nans in the test efficiences. this might be due to really small weights. setting those efficiencies to zero.')
+#            test_eff[np.isnan(test_eff)] = 0
         
-        test_efficiencies.append(test_eff)
+        test_efficiencies.append(ln_test_eff)
 
         if stop_if_inf and loss_is_inf:
             print('nan/inf loss, stopping')
@@ -1523,7 +1601,7 @@ def trainer_alpha_divergence(
             current_model = deepcopy(model.state_dict())
             torch.save(current_model, f'{save}_latest.pt')
             np.save(f'{save}.npy', losses, allow_pickle=True)
-            fig, ax = plot_loss(losses, fname=f'{save}.png')
+            fig, ax = plot_loss(losses, fname=f'{save}.png', loss_name=r'$\alpha = 2$ divergence')
             plt.close()
 
             np.save(
@@ -1535,7 +1613,8 @@ def trainer_alpha_divergence(
             # plot min, max, 1sigma, and mean efficiencies
             fig, ax = plt.subplots()
             ax.set_xlabel('epoch')
-            ax.set_ylabel(r'test reweighting efficiency')
+            ax.set_ylabel(r'ln test reweighting efficiency')
+            ax.axhline(y=0, linestyle='-', color='black')
             ax.plot(
                 range(epoch),
                 [min(test_efficiencies[i]) for i in range(epoch)],
@@ -1569,6 +1648,8 @@ def trainer_alpha_divergence(
                 linestyle='--',
                 label=r'max'
             )
+            ax.axhline(y = 0, linestyle='--', color='black')
+            ax.axhline(y = np.log(0.1), linestyle='--', color='black')
             ax.legend()
             fig.savefig(f'{save}_test_efficiencies.png')
             plt.close()
@@ -1602,4 +1683,4 @@ def trainer_alpha_divergence(
     model.load_state_dict(best_model)
     model.eval()
                 
-    return model, losses
+    return model, losses, test_efficiencies, best_epoch, all_ln_test_weights
