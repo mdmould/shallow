@@ -234,7 +234,7 @@ def trainer(
     if batch_size is None:
         batch_size = nt
 
-    flow = equinox.nn.inference_model(flow, False)
+    flow = equinox.nn.inference_mode(flow, False)
     params, static = equinox.partition(flow, filter_spec)
     if opt is None:
         if wd is None:
