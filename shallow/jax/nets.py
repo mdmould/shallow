@@ -126,7 +126,10 @@ def trainer(
             yv = yt[shuffle][:nv]
             xt = xt[shuffle][nv:]
             yt = yt[shuffle][nv:]
+            
     nt = xt.shape[0]
+    if batch_size is None:
+        batch_size = nt
 
     def train_step(carry, batch):
         key, params, state = carry
@@ -152,7 +155,7 @@ def trainer(
         return valid_step(carry, batch)
 
     if all_batches:
-        if batch_size is None or batch_size > nt:
+        if batch_size > nt:
             batch_size = nt
         nbt, remt = divmod(nt, batch_size)
 

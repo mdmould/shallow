@@ -229,7 +229,10 @@ def trainer(
             xv = jnp.asarray(valid)
             valid = xv,
         assert xv.shape[1:] == xt.shape[1:]
+        
     nt = xt.shape[0]
+    if batch_size is None:
+        batch_size = nt
 
     flow = equinox.nn.inference_model(flow, False)
     params, static = equinox.partition(flow, filter_spec)
@@ -269,7 +272,7 @@ def trainer(
         return valid_step(params, x)
 
     if all_batches:
-        if batch_size is None or batch_size > nt:
+        if batch_size > nt:
             batch_size = nt
         nbt, remt = divmod(nt, batch_size)
         if valid:
