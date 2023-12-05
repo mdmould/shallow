@@ -116,6 +116,7 @@ def get_pre(bounds=[None], norms=None):
 
 
 ## TODO: bounder bijection in case of no bounds
+## TODO: add condition embedding
 def get_flow(flow, bounds=[None], norms=None):
     bijection = Chain([flow.bijection, get_pre(bounds, norms)])
     return Transformed(flow.base_dist, bijection)

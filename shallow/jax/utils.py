@@ -1,9 +1,10 @@
 import jax
 import jax.numpy as jnp
+import equinox
 
 
 class Seed:
-    def __init__(self, seed=0):
+    def __init__(self, seed = 0):
         self._seed = int(seed)
         self.key = jax.random.PRNGKey(seed)
     def __call__(self, num=2):
@@ -34,3 +35,18 @@ def get_array_to_params(params):
 
 def count_params(params):
     return params_to_array(params).size
+
+
+def save(file, model, filter_spec = equinox.is_inexact_array):
+    params = equinox.filter(model, filter_spec)
+    array = params_to_array(params)
+    return jnp.save(file, array)
+
+
+def load(file, model, filter_spec = equinox.is_inexact_array):
+    params, static = equinox.partition(model, filter_spec)
+    array_to_params = get_array_to_params(params)
+    array = jnp.load(file)
+    params = array_to_params(array)
+    model = equinox.combine(params, static)
+    return model
