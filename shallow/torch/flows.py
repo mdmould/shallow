@@ -400,6 +400,51 @@ class AutoregressiveNeuralSplineFlow(BaseFlow):
             )
 
 
+def build_coupling_neural_spline_flow(**kwargs):
+    flow = CouplingNeuralSplineFlow(**kwargs)
+
+    if kwargs.get('enable_identity_init'):
+        if kwargs.get('permutation', None) is not None:
+            raise ValueError('Identity CouplingNeuralSpline flow including permutations not supported.')
+
+        with torch.no_grad():
+            for i in range(len(flow._transform._transforms[1]._transforms)):
+                t = flow._transform._transforms[1]._transforms[i]
+                if hasattr(t, 'transform_net'):
+                    for name, param in t.transform_net.named_parameters():
+                        param.copy_(torch.zeros_like(param))
+
+        # ensure we get identity!
+        # this uses the same tolerance as the test case in
+        # https://github.com/bayesiains/nflows/pull/65/
+        # as torchtests uses an absolute tolerance in it's assertEquals
+
+        ntest = 100
+        inputs = torch.rand((ntest, kwargs.get('inputs')))
+
+        context = None
+        if kwargs.get('contexts', None) is not None:
+            context = torch.rand((ntest, kwargs.get('contexts')))
+
+        output, logabsdet = flow._transform(inputs=inputs, context=context)
+
+        assert torch.isclose(
+            output,
+            inputs,
+            rtol=0,
+            atol=1e-6
+        ).all()
+
+        assert torch.isclose(
+            logabsdet,
+            torch.zeros_like(logabsdet),
+            rtol=0,
+            atol=1e-6
+        ).all()
+
+    return flow
+
+
 class CouplingNeuralSplineFlow(BaseFlow):
     
     def _get_transform(
@@ -448,7 +493,7 @@ class CouplingNeuralSplineFlow(BaseFlow):
         #         batchnorm=self.batchnorm_within,
         #         )
         
-        return PiecewiseRationalQuadraticCouplingTransform(
+        transform = PiecewiseRationalQuadraticCouplingTransform(
             mask=mask,
             transform_net_create_fn=fn,
             num_bins=bins,
@@ -456,6 +501,8 @@ class CouplingNeuralSplineFlow(BaseFlow):
             tail_bound=bound,
             enable_identity_init=enable_identity_init
         )
+
+        return transform
 
 
 class CouplingNeuralSplineFlowCustomStretch(CouplingNeuralSplineFlow):
