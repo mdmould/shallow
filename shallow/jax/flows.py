@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import jax_tqdm
 import equinox
 import optax
-# import optimistix
 
 from flowjax.distributions import Transformed
 from flowjax.bijections import Chain
@@ -15,8 +14,8 @@ from .transforms import get_pre
 from .utils import params_to_array, get_array_to_params, count_params
 
 
-## TODO: bounder bijection in case of no bounds
 ## TODO: add condition embedding
+## TODO: bounder bijection in case of no bounds
 def get_flow(flow, bounds=[None], norms=None):
     bijection = Chain([flow.bijection, get_pre(bounds, norms)])
     return Transformed(flow.base_dist, bijection)
@@ -31,6 +30,8 @@ def get_filter(flow, filter_spec=equinox.is_inexact_array):
 
 
 ## TODO: make this work
+# import optimistix
+
 # def numerical_inverse(flow, z, solver=None, bounds=None):
 #     fn = lambda x, z: flow.bijection.inverse(x) - z
 #     if solver is None:
@@ -53,7 +54,6 @@ def get_filter(flow, filter_spec=equinox.is_inexact_array):
 #         return result.value
 #     x = jax.vmap(single)(z)
 #     return x
-
 
 # def numerical_sampling(flow, key, shape, solver=None):
 #     z = flow.base_dist.sample(key, shape)
