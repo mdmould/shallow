@@ -8,7 +8,6 @@ import optax
 
 from flowjax.distributions import Transformed
 from flowjax.bijections import Chain
-from flowjax.flows import
 
 from .transforms import get_pre
 from .utils import params_to_array, get_array_to_params, count_params
