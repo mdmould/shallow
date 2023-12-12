@@ -2,11 +2,12 @@ import jax
 import jax.numpy as jnp
 
 from flowjax.bijections import (
+    Chain,
+    Exp,
     Invert,
     SoftPlus,
-    Tanh,
-    Chain,
     Stack,
+    Tanh,
     )
 
 
@@ -14,10 +15,21 @@ from flowjax.bijections import (
 from typing import ClassVar
 from jax import Array
 from jax.typing import ArrayLike
-from flowjax.bijections import Bijection
+from flowjax.bijections import AbstractBijection
 from flowjax.utils import arraylike_to_array
 
-class Affine(Bijection):
+class Affine(AbstractBijection):
+    """Elementwise affine transformation ``y = a*x + b``.
+
+    ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
+
+    Args:
+        loc: Location parameter. Defaults to 0.
+        scale: Scale parameter. Defaults to 1.
+    """
+
+    shape: tuple[int, ...]
+    cond_shape: ClassVar[None] = None
     loc: Array
     scale: Array
 
@@ -25,31 +37,25 @@ class Affine(Bijection):
         self,
         loc: ArrayLike = 0,
         scale: ArrayLike = 1,
-        ):
-        loc, scale = [arraylike_to_array(a, dtype=float) for a in (loc, scale)]
+    ):
+        loc, scale = (arraylike_to_array(a, dtype=float) for a in (loc, scale))
         self.shape = jnp.broadcast_shapes(loc.shape, scale.shape)
-        self.cond_shape = None
-
         self.loc = jnp.broadcast_to(loc, self.shape)
         self.scale = jnp.broadcast_to(scale, self.shape)
 
     def transform(self, x, condition=None):
-        x, _ = self._argcheck_and_cast(x)
         return x * self.scale + self.loc
 
     def transform_and_log_det(self, x, condition=None):
-        x, _ = self._argcheck_and_cast(x)
         scale = self.scale
-        return x * scale + self.loc, jnp.log(jnp.abs(self.scale)).sum()
+        return x * scale + self.loc, jnp.log(scale).sum()
 
     def inverse(self, y, condition=None):
-        y, _ = self._argcheck_and_cast(y)
         return (y - self.loc) / self.scale
 
     def inverse_and_log_det(self, y, condition=None):
-        y, _ = self._argcheck_and_cast(y)
         scale = self.scale
-        return (y - self.loc) / scale, -jnp.log(jnp.abs(self.scale)).sum()
+        return (y - self.loc) / scale, -jnp.log(scale).sum()
 
 
 def get_bounder(bounds):
@@ -66,7 +72,8 @@ def get_bounder(bounds):
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        bijection = Chain([SoftPlus(), Affine(loc, scale)])
+        bijection = Chain([Exp(), Affine(loc, scale)])
+        # bijection = Chain([SoftPlus(), Affine(loc, scale)])
     # two sided bounds
     ## TODO: try normal CDF instead
     else:
