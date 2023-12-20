@@ -17,6 +17,7 @@ setup(
     author_email='mattdmould@gmail.com',
     license='MIT',
     packages=find_packages(),
+    python_requires='>=3.10',
     install_requires=[
         'numpy',
         'tqdm',
@@ -32,6 +33,4 @@ setup(
         # 'equinox',
         # 'flowjax',
         ],
-    python_requires='>=3.9',
     )
-
