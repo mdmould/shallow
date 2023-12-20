@@ -28,9 +28,9 @@ setup(
         # 'numpyro',
         # 'jax',
         # 'jax_tqdm',
-        # 'jax_tqdm @ git+https://github.com/jeremiecoullon/jax-tqdm.git',
+        # 'jax_tqdm',
         # 'optax',
         # 'equinox',
-        # 'flowjax',
+        # 'flowjax>=11.2.0',
         ],
     )

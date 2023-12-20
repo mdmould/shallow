@@ -7,5 +7,5 @@ jax
 jax_tqdm
 optax
 equinox
-flowjax
+flowjax>=11.2.0
 
