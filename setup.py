@@ -28,7 +28,6 @@ setup(
         # 'numpyro',
         # 'jax',
         # 'jax_tqdm',
-        # 'jax_tqdm',
         # 'optax',
         # 'equinox',
         # 'flowjax>=11.2.0',
