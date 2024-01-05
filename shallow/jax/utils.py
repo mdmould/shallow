@@ -13,6 +13,18 @@ class Seed:
 
 
 def params_to_array(params):
+    array = jax.flatten_util.ravel_pytree(params)[0]
+    return array
+
+
+def get_array_to_params(params):
+    array, unflatten = jax.flatten_util.ravel_pytree(params)
+    def array_to_params(array):
+        return unflatten(array)
+    return array_to_params
+
+
+def _params_to_array(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
     flat_arrays = list(map(jnp.ravel, arrays))
     array = jnp.concatenate(flat_arrays)
@@ -20,7 +32,7 @@ def params_to_array(params):
 
 
 ## TODO: convert maps to jax transformations
-def get_array_to_params(params):
+def _get_array_to_params(params):
     arrays, unflatten = jax.tree_util.tree_flatten(params)
     shapes = list(map(jnp.shape, arrays))
     lens = list(map(lambda shape: jnp.prod(jnp.array(shape)), shapes))
