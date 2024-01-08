@@ -136,6 +136,7 @@ def trainer(
 
     flow = equinox.nn.inference_mode(flow, False)
     params, static = equinox.partition(flow, filter_spec)
+
     if opt is None:
         if wd is None:
             opt = optax.adam(learning_rate=lr)
@@ -283,7 +284,7 @@ def trainer(
         key, params, state, loss = epoch_step(key, params, state)
         best_epoch, best_loss, best_params = best
         best = jax.lax.cond(
-            loss[-1] < best_loss, # -1 here refers to tloss or vloss, not epoch
+            loss[-1] < best_loss, # -1 here refers to tloss or vloss
             lambda: (epoch, loss[-1], params),
             lambda: best,
             )
