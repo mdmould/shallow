@@ -4,6 +4,7 @@ import jax.numpy as jnp
 from flowjax.bijections import (
     Chain,
     Exp,
+    Identity,
     Invert,
     SoftPlus,
     Stack,
@@ -61,7 +62,7 @@ class Affine(AbstractBijection):
 def get_bounder(bounds):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
-        bijection = Affine(0, 1)
+        bijection = Identity() # Affine(0, 1)
     # one sided bounds
     elif any(bound is None for bound in bounds):
         # right side bounded
@@ -93,11 +94,16 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
-def get_pre(bounds=[None], norms=None):
-    bounder = Stack([get_bounder(bound) for bound in bounds])
-    if norms is not None:
+def get_pre(bounds = None, norms = None):
+    if bounds is None and norms is None:
+        return Identity()
+    elif bounds is not None and norms is None:
+        return Stack(list(map(get_bounder, bounds)))
+    elif bounds is None and norms is not None:
+        return Invert(get_normer(norms))
+    else:
+        bounder = Stack(list(map(get_bounder, bounds)))
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
-        bounder = Chain([denormer, bounder])
-    return bounder
+        return Chain([denormer, bounder])
     
