@@ -3,11 +3,12 @@ import jax.numpy as jnp
 
 from flowjax.bijections import (
     Chain,
-    Exp,
     Identity,
     Invert,
-    SoftPlus,
     Stack,
+    Affine,
+    Exp,
+    SoftPlus,
     Tanh,
     )
 
@@ -19,7 +20,7 @@ from jax.typing import ArrayLike
 from flowjax.bijections import AbstractBijection
 from flowjax.utils import arraylike_to_array
 
-class Affine(AbstractBijection):
+class Affine_(AbstractBijection):
     """Elementwise affine transformation ``y = a*x + b``.
 
     ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
@@ -63,6 +64,7 @@ def get_bounder(bounds):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
         bijection = Identity() # Affine(0, 1)
+        
     # one sided bounds
     elif any(bound is None for bound in bounds):
         # right side bounded
@@ -73,16 +75,23 @@ def get_bounder(bounds):
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        bijection = Chain([Exp(), Affine(loc, scale)])
-        # bijection = Chain([SoftPlus(), Affine(loc, scale)])
+        constraint = Exp()
+        # constraint = SoftPlus()
+        reflect = Affine(loc, scale, positivity_constraint = Identity())
+        bijection = Chain([constraint, reflect])
+        
     # two sided bounds
     ## TODO: try normal CDF instead
     else:
         loc = bounds[0]
         scale = bounds[1] - bounds[0]
-        bijection = Chain(
-            [Tanh(), Affine(0.5, 0.5), Affine(loc, scale)],
-            )
+        constraint = Tanh()
+        # rescale_to_unit = Affine(0.5, 0.5)
+        # rescale_from_unit = Affine(loc, scale)
+        # bijection = Chain([constraint, resccale_to_unit, rescale_from_unit])
+        rescale = Affine(0.5 * scale + loc, 0.5 * scale)
+        bijection = Chain([constraint, rescale])
+
     return bijection
 
 
@@ -106,4 +115,21 @@ def get_pre(bounds = None, norms = None):
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
         return Chain([denormer, bounder])
+
+
+def get_pre_stack1d(bounds = None, norms = None):
+    if bounds is None and norms is None:
+        return Identity()
+    elif bounds is not None and norms is None:
+        return Stack(list(map(get_bounder, bounds)))
+    elif bounds is None and norms is not None:
+        return Stack(list(map(lambda x: Invert(get_normer(x)), norms.T)))
+    else:
+        pres = []
+        for bound, norm in zip(bounds, norms.T):
+            bounder = get_bounder(bound)
+            debounded_norm = jax.vmap(bounder.inverse)(norm)
+            denormer = Invert(get_normer(debounded_norm))
+            pres.append(Chain([denormer, bounder]))
+        return Stack(pres)        
     
