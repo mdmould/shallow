@@ -60,7 +60,7 @@ class Affine_(AbstractBijection):
         return (y - self.loc) / scale, -jnp.log(scale).sum()
 
 
-def get_bounder(bounds):
+def get_bounder(bounds, exp = True):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
         bijection = Identity() # Affine(0, 1)
@@ -75,8 +75,7 @@ def get_bounder(bounds):
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        constraint = Exp()
-        # constraint = SoftPlus()
+        constraint = Exp() if exp else SoftPlus()
         reflect = Affine(loc, scale, positivity_constraint = Identity())
         bijection = Chain([constraint, reflect])
         
