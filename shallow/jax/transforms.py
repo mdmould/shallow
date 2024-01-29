@@ -102,15 +102,15 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
-def get_pre(bounds = None, norms = None):
+def get_pre(bounds = None, norms = None, exp = True):
     if bounds is None and norms is None:
         return Identity()
     elif bounds is not None and norms is None:
-        return Stack(list(map(get_bounder, bounds)))
+        return Stack([get_bounder(b, exp) for b in bounds])
     elif bounds is None and norms is not None:
         return Invert(get_normer(norms))
     else:
-        bounder = Stack(list(map(get_bounder, bounds)))
+        bounder = Stack([get_bounder(b, exp) for b in bounds])
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
         return Chain([denormer, bounder])
