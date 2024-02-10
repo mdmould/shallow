@@ -278,7 +278,7 @@ def trainer(
     if loss_fn is None:
         loss_fn = ce
     loss_batch = lambda params, *x: loss_fn(equinox.combine(params, static), *x)
-    loss_and_grad = # jax.value_and_grad(loss_batch)
+    # loss_and_grad = jax.value_and_grad(loss_batch)
     loss_and_grad = equinox.filter_value_and_grad(loss_batch)
 
     def train_step(carry, x):
