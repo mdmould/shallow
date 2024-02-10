@@ -198,19 +198,19 @@ def trainer(
     key,
     flow,
     train,
-    valid=None,
-    batch_size=None,
-    all_batches=True,
-    epochs=1,
-    patience=None,
-    stop_if_inf=True,
-    lr=1e-3,
-    wd=None,
-    opt=None,
-    loss_fn=None,
-    print_batch=False,
-    print_epoch=True,
-    filter_spec=equinox.is_inexact_array,
+    valid = None,
+    batch_size = None,
+    all_batches = True,
+    epochs = 1,
+    patience = None,
+    stop_if_inf = True,
+    lr  =1e-3,
+    wd = None,
+    opt = None,
+    loss_fn = None,
+    print_batch = False,
+    print_epoch = True,
+    filter_spec = equinox.is_inexact_array,
     ):
 
     if type(train) is tuple and len(train) == 2:
@@ -278,7 +278,8 @@ def trainer(
     if loss_fn is None:
         loss_fn = ce
     loss_batch = lambda params, *x: loss_fn(equinox.combine(params, static), *x)
-    loss_and_grad = jax.value_and_grad(loss_batch)
+    loss_and_grad = # jax.value_and_grad(loss_batch)
+    loss_and_grad = equinox.filter_value_and_grad(loss_batch)
 
     def train_step(carry, x):
         params, state = carry
@@ -495,7 +496,8 @@ def trainer(
     tqdm._instances.clear()
 
     (key, params, state, best, stop), losses = jax.lax.scan(
-        cond_patience,
+        # cond_patience,
+        equinox.filter_jit(cond_patience),
         (key, params, state, (0, jnp.inf, params), False),
         jnp.arange(epochs),
         )
