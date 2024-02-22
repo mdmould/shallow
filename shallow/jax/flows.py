@@ -116,17 +116,10 @@ def filter_tuple(filter_spec):
 def bound_from_unbound(
     flow,
     bounds,
-    norms = True,
+    norms = None,
     exp = True,
     filter_spec = equinox.is_inexact_array,
 ):
-    if norms is True:
-        posteriors = load_posteriors()[:, :, :-1]
-        nsamples, nobs, ndim = posteriors.shape
-        norms = posteriors.reshape(-1, ndim)
-    else:
-        norms = None
-
     post = get_pre(bounds = bounds, norms = norms, exp = exp)
     base_dist = flow.base_dist
     bijection = Chain([flow.bijection, post])
