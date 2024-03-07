@@ -76,7 +76,7 @@ def get_bounder(bounds, exp = True):
             loc = bounds[0]
             scale = 1
         constraint = Exp() if exp else SoftPlus()
-        reflect = Affine(loc, scale, positivity_constraint = Identity())
+        reflect = Affine(loc, scale, scale_constraint = Identity())
         bijection = Chain([constraint, reflect])
         
     # two sided bounds
