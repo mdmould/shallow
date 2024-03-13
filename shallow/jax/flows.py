@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from itertools import accumulate
 from flowjax.distributions import AbstractDistribution, Transformed
 from flowjax.bijections import Affine, Chain, Invert
+from flowjax.wrappers import NonTrainable
 
 from .transforms import get_pre
 from .utils import params_to_array, get_array_to_params, count_params
@@ -113,35 +114,21 @@ def filter_tuple(filter_spec):
     return True, filter_spec
 
 
-def bound_from_unbound(
-    flow,
-    bounds,
-    norms = None,
-    exp = True,
-    filter_spec = equinox.is_inexact_array,
-):
-    post = get_pre(bounds = bounds, norms = norms, exp = exp)
+def bound_from_unbound(flow, bounds = None, norms = None):
+    post = get_pre(bounds = bounds, norms = norms)
     base_dist = flow.base_dist
     bijection = Chain([flow.bijection, post])
     flow = Transformed(base_dist, bijection)
     flow = BoundedFlow(flow, bounds)
-
-    filter_spec = filter_default(flow, filter_spec)
-    filter_spec = filter_bounds(filter_spec)
-    filter_spec = filter_base(filter_spec)
-
-    filter_spec = equinox.tree_at(
-        lambda tree: tree.bijection[-1], filter_spec, replace = False,
+    flow = equinox.tree_at(
+        lambda flow: flow.base_dist, flow, replace_fn = NonTrainable,
     )
+    flow = equinox.tree_at(
+        lambda flow: flow.bijection[-1], flow, replace_fn = NonTrainable,
+    )
+    return flow
 
-    return flow, filter_spec
-
-def bound_from_bound(
-    flow,
-    bounds = None,
-    trainable = False,
-    filter_spec = equinox.is_inexact_array,
-):
+def bound_from_bound(flow, bounds, filter_spec):
     ndim = flow.shape[0]
     if bounds is None:
         bounds = jnp.array([jnp.zeros(ndim), jnp.ones(ndim)]).T
@@ -160,16 +147,12 @@ def bound_from_bound(
     bijection = Chain([flow.bijection, to_unit, from_unit])
     flow = Transformed(base_dist, bijection)
 
-    if trainable:
-        flow = BoundedFlowTrainable(flow)
-        filter_spec = filter_default(flow, filter_spec)
-    else:
-        flow = BoundedFlow(flow, bounds)
-        filter_spec = filter_default(flow, filter_spec)
-        filter_spec = equinox.tree_at(
-            lambda tree: tree.bijection[-1], filter_spec, replace = False,
-        )
-        filter_spec = filter_bounds(filter_spec)
+    flow = BoundedFlow(flow, bounds)
+    filter_spec = filter_default(flow, filter_spec)
+    filter_spec = equinox.tree_at(
+        lambda tree: tree.bijection[-1], filter_spec, replace = False,
+    )
+    filter_spec = filter_bounds(filter_spec)
 
     filter_spec = filter_base(filter_spec)
     filter_spec = equinox.tree_at(
@@ -254,7 +237,12 @@ def trainer(
         batch_size = nt
 
     flow = equinox.nn.inference_mode(flow, False)
-    params, static = equinox.partition(flow, filter_spec)
+
+    params, static = equinox.partition(
+        flow,
+        filter_spec,
+        is_leaf = lambda leaf: isinstance(leaf, NonTrainable),
+    )
 
     if opt is None:
         if wd is None:
