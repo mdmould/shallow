@@ -61,7 +61,7 @@ class Affine(AbstractBijection):
 def get_bounder(bounds):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
-        bijection = Identity() # Affine(0, 1)
+        bijection = Identity()
         
     # one sided bounds
     elif any(bound is None for bound in bounds):
@@ -74,7 +74,7 @@ def get_bounder(bounds):
             loc = bounds[0]
             scale = 1
         constraint = Exp()
-        reflect = Affine(loc, scale, scale_constraint = Identity())
+        reflect = Affine(loc, scale)
         bijection = Chain([constraint, reflect])
         
     # two sided bounds
