@@ -6,7 +6,7 @@ from flowjax.bijections import (
     Identity,
     Invert,
     Stack,
-    Affine,
+    # Affine,
     Exp,
     SoftPlus,
     Tanh,
@@ -20,7 +20,7 @@ from jax.typing import ArrayLike
 from flowjax.bijections import AbstractBijection
 from flowjax.utils import arraylike_to_array
 
-class Affine_(AbstractBijection):
+class Affine(AbstractBijection):
     """Elementwise affine transformation ``y = a*x + b``.
 
     ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
@@ -40,27 +40,25 @@ class Affine_(AbstractBijection):
         loc: ArrayLike = 0,
         scale: ArrayLike = 1,
     ):
-        loc, scale = (arraylike_to_array(a, dtype=float) for a in (loc, scale))
-        self.shape = jnp.broadcast_shapes(loc.shape, scale.shape)
-        self.loc = jnp.broadcast_to(loc, self.shape)
-        self.scale = jnp.broadcast_to(scale, self.shape)
+        self.loc, self.scale = jnp.broadcast_arrays(
+            *(arraylike_to_array(a, dtype=float) for a in (loc, scale)),
+        )
+        self.shape = scale.shape
 
     def transform(self, x, condition=None):
         return x * self.scale + self.loc
 
     def transform_and_log_det(self, x, condition=None):
-        scale = self.scale
-        return x * scale + self.loc, jnp.log(scale).sum()
+        return x * self.scale + self.loc, jnp.log(jnp.abs(self.scale)).sum()
 
     def inverse(self, y, condition=None):
         return (y - self.loc) / self.scale
 
     def inverse_and_log_det(self, y, condition=None):
-        scale = self.scale
-        return (y - self.loc) / scale, -jnp.log(scale).sum()
+        return (y - self.loc) / self.scale, -jnp.log(jnp.abs(self.scale)).sum()
 
 
-def get_bounder(bounds, exp = True):
+def get_bounder(bounds):
     # unbounded
     if (bounds is None) or all(bound is None for bound in bounds):
         bijection = Identity() # Affine(0, 1)
@@ -75,7 +73,7 @@ def get_bounder(bounds, exp = True):
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        constraint = Exp() if exp else SoftPlus()
+        constraint = Exp()
         reflect = Affine(loc, scale, scale_constraint = Identity())
         bijection = Chain([constraint, reflect])
         
@@ -85,9 +83,6 @@ def get_bounder(bounds, exp = True):
         loc = bounds[0]
         scale = bounds[1] - bounds[0]
         constraint = Tanh()
-        # rescale_to_unit = Affine(0.5, 0.5)
-        # rescale_from_unit = Affine(loc, scale)
-        # bijection = Chain([constraint, resccale_to_unit, rescale_from_unit])
         rescale = Affine(0.5 * scale + loc, 0.5 * scale)
         bijection = Chain([constraint, rescale])
 
@@ -102,15 +97,15 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
-def get_pre(bounds = None, norms = None, exp = True):
+def get_pre(bounds = None, norms = None):
     if bounds is None and norms is None:
         return Identity()
     elif bounds is not None and norms is None:
-        return Stack([get_bounder(b, exp) for b in bounds])
+        return Stack(list(map(get_bounder, bounds)))
     elif bounds is None and norms is not None:
         return Invert(get_normer(norms))
     else:
-        bounder = Stack([get_bounder(b, exp) for b in bounds])
+        bounder = Stack(list(map(get_bounder, bounds)))
         debounded_norms = jax.vmap(bounder.inverse)(norms)
         denormer = Invert(get_normer(debounded_norms))
         return Chain([denormer, bounder])
