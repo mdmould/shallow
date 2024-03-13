@@ -43,7 +43,7 @@ class Affine(AbstractBijection):
         self.loc, self.scale = jnp.broadcast_arrays(
             *(arraylike_to_array(a, dtype=float) for a in (loc, scale)),
         )
-        self.shape = scale.shape
+        self.shape = self.scale.shape
 
     def transform(self, x, condition=None):
         return x * self.scale + self.loc
