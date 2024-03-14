@@ -162,12 +162,12 @@ def bound_from_bound(flow, bounds, filter_spec):
     return flow, filter_spec
 
 
-def nll(flow, x, c=None):
-    return -flow.log_prob(x, condition=c)
+def nll(flow, x, c = None):
+    return -flow.log_prob(x, condition = c)
 
 
-def ce(flow, x, c=None):
-    return nll(flow, x, c=c).mean()
+def ce(flow, x, c = None):
+    return nll(flow, x, c = c).mean()
 
 
 def trainer(
@@ -180,7 +180,7 @@ def trainer(
     epochs = 1,
     patience = None,
     stop_if_inf = True,
-    lr  =1e-3,
+    lr = 1e-3,
     wd = None,
     opt = None,
     loss_fn = None,
@@ -245,11 +245,8 @@ def trainer(
     )
 
     if opt is None:
-        if wd is None:
-            opt = optax.adam(learning_rate=lr)
-        else:
-            opt = optax.adamw(learning_rate=lr, weight_decay=wd)
-    elif callable(opt):
+        opt = optax.adam if wd is None else optax.adamw
+    if callable(opt):
         if wd is None:
             opt = opt(learning_rate=lr)
         else:
