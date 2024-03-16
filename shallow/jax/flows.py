@@ -1,4 +1,3 @@
-from functools import partial
 from tqdm.auto import tqdm
 
 import jax
@@ -116,15 +115,22 @@ def filter_tuple(filter_spec):
 
 def bound_from_unbound(flow, bounds = None, norms = None):
     post = get_pre(bounds = bounds, norms = norms)
-    base_dist = flow.base_dist
-    bijection = Chain([flow.bijection, post])
-    flow = Transformed(base_dist, bijection)
-    flow = BoundedFlow(flow, bounds)
+    # base_dist = flow.base_dist
+    # bijection = Chain([flow.bijection, post])
+    # flow = Transformed(base_dist, bijection)
+    # flow = BoundedFlow(flow, bounds)
+    # flow = equinox.tree_at(
+    #     lambda flow: flow.base_dist, flow, replace_fn = NonTrainable,
+    # )
+    # flow = equinox.tree_at(
+    #     lambda flow: flow.bijection[-1], flow, replace_fn = NonTrainable,
+    # )
+    flow = Transformed(flow, post)
     flow = equinox.tree_at(
-        lambda flow: flow.base_dist, flow, replace_fn = NonTrainable,
+        lambda flow: flow.base_dist.base_dist, flow, replace_fn = NonTrainable,
     )
     flow = equinox.tree_at(
-        lambda flow: flow.bijection[-1], flow, replace_fn = NonTrainable,
+        lambda flow: flow.bijection, flow, replace_fn = NonTrainable,
     )
     return flow
 
