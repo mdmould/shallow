@@ -13,7 +13,10 @@ from flowjax.bijections import Affine, Chain, Invert
 from flowjax.wrappers import NonTrainable
 
 from .transforms import get_pre
-from .utils import params_to_array, get_array_to_params, count_params
+from .utils import get_partition, params_to_array, get_array_to_params
+
+
+INF = jnp.nan_to_num(jnp.inf).item()
 
 
 class Independent(AbstractDistribution):
@@ -70,8 +73,25 @@ class BoundedFlow(Transformed):
         return jax.lax.cond(pred, true_fn, false_fn)
 
 
-def bound_from_unbound(flow, bounds):
-    return None
+def bound_from_unbound(flow, bounds = None, norms = None):
+    post = get_pre(bounds, norms)
+    flow = Transformed(
+        flow.base_dist,
+        Chain([flow.bijection, post]),
+    )
+
+    flow = BoundedFlow(flow, bounds)
+    flow = equinox.tree_at(
+        lambda tree: tree.base_dist, flow, replace_fn = NonTrainable,
+    )
+    flow = equinox.tree_at(
+        lambda tree: tree.bijection[-1], flow, replace_fn = NonTrainable,
+    )
+    flow = equinox.tree_at(
+        lambda tree: tree.bounds, flow, replace_fn = NonTrainable,
+    )
+
+    return flow
 
 
 def bound_from_bound(flow, bounds):
@@ -99,6 +119,9 @@ def bound_from_bound(flow, bounds):
     )
     flow = equinox.tree_at(
         lambda tree: tree.bijection[-1], flow, replace_fn = NonTrainable,
+    )
+    flow = equinox.tree_at(
+        lambda tree: tree.bounds, flow, replace_fn = NonTrainable,
     )
     
     return flow
@@ -277,12 +300,7 @@ def trainer(
         batch_size = nt
 
     flow = equinox.nn.inference_mode(flow, False)
-
-    params, static = equinox.partition(
-        flow,
-        filter_spec,
-        is_leaf = lambda leaf: isinstance(leaf, NonTrainable),
-    )
+    params, static = get_partition(flow, filter_spec)
 
     if opt is None:
         opt = optax.adam if wd is None else optax.adamw
