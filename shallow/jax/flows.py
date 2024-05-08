@@ -12,7 +12,7 @@ from flowjax.distributions import AbstractDistribution, Transformed
 from flowjax.bijections import Affine, Chain, Invert
 from flowjax.wrappers import NonTrainable
 
-from .transforms import get_pre
+from .transforms import get_post
 from .utils import get_partition, params_to_array, get_array_to_params
 
 
@@ -74,7 +74,7 @@ class BoundedFlow(Transformed):
 
 
 def bound_from_unbound(flow, bounds = None, norms = None):
-    post = get_pre(bounds, norms)
+    post = get_post(bounds, norms)
     flow = Transformed(
         flow.base_dist,
         Chain([flow.bijection, post]),
@@ -249,7 +249,6 @@ def trainer(
     loss_fn = None,
     print_batch = False,
     print_epoch = True,
-    filter_spec = equinox.is_inexact_array,
     ):
 
     if type(train) is tuple and len(train) == 2:
@@ -300,7 +299,7 @@ def trainer(
         batch_size = nt
 
     flow = equinox.nn.inference_mode(flow, False)
-    params, static = get_partition(flow, filter_spec)
+    params, static = get_partition(flow)
 
     if opt is None:
         opt = optax.adam if wd is None else optax.adamw
@@ -533,7 +532,6 @@ def trainer(
 
     (key, params, state, best, stop), losses = jax.lax.scan(
         cond_patience,
-        # equinox.filter_jit(cond_patience),
         (key, params, state, (0, jnp.inf, params), False),
         jnp.arange(epochs),
         )

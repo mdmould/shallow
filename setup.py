@@ -18,9 +18,9 @@ setup(
     license='MIT',
     packages=find_packages(),
     python_requires='>=3.10',
-    install_requires=[
-        'numpy',
-        'tqdm',
+    # install_requires=[
+        # 'numpy',
+        # 'tqdm',
         # 'tensorflow',
         # 'torch',
         # 'nflows @ git+https://github.com/bayesiains/nflows.git',
@@ -31,5 +31,5 @@ setup(
         # 'optax',
         # 'equinox',
         # 'flowjax>=11.2.0',
-        ],
+        # ],
     )

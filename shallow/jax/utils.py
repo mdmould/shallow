@@ -31,12 +31,6 @@ def get_params(model, filter_spec = equinox.is_inexact_array):
     return params
 
 
-def count_params(model, filter_spec = equinox.is_inexact_array):
-    params = get_params(model, filter_spec)
-    num_params = params_to_array(params).size
-    return num_params
-
-
 def params_to_array(params):
     array = jax.flatten_util.ravel_pytree(params)[0]
     return array
@@ -44,19 +38,24 @@ def params_to_array(params):
 
 def get_array_to_params(params):
     array, unflatten = jax.flatten_util.ravel_pytree(params)
-    def array_to_params(array):
-        return unflatten(array)
+    array_to_params = lambda array: unflatten(array)
     return array_to_params
 
 
+def count_params(model, filter_spec = equinox.is_inexact_array):
+    params = get_params(model, filter_spec)
+    num_params = params_to_array(params).size
+    return num_params
+
+
 def save(file, model, filter_spec = equinox.is_inexact_array):
-    params = equinox.filter(model, filter_spec)
+    params = get_params(model, filter_spec)
     array = params_to_array(params)
     return jnp.save(file, array)
 
 
 def load(file, model, filter_spec = equinox.is_inexact_array):
-    params, static = equinox.partition(model, filter_spec)
+    params, static = get_partition(model, filter_spec)
     array_to_params = get_array_to_params(params)
     array = jnp.load(file)
     params = array_to_params(array)

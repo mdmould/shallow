@@ -97,7 +97,7 @@ def get_normer(norms):
     return Affine(loc, scale)
 
 
-def get_pre(bounds = None, norms = None):
+def get_post(bounds = None, norms = None):
     if bounds is None and norms is None:
         return Identity()
     elif bounds is not None and norms is None:
@@ -111,7 +111,7 @@ def get_pre(bounds = None, norms = None):
         return Chain([denormer, bounder])
 
 
-def get_pre_stack1d(bounds = None, norms = None):
+def get_post_stack1d(bounds = None, norms = None):
     if bounds is None and norms is None:
         return Identity()
     elif bounds is not None and norms is None:
