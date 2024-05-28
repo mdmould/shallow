@@ -74,6 +74,9 @@ class BoundedFlow(Transformed):
 
 
 def bound_from_unbound(flow, bounds = None, norms = None):
+    if bounds is None and norms is None:
+        return flow
+    
     post = get_post(bounds, norms)
     flow = Transformed(
         flow.base_dist,
