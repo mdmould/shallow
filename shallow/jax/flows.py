@@ -253,6 +253,7 @@ def trainer(
     wd = None,
     opt = None,
     loss_fn = None,
+    return_last = False,
     print_batch = False,
     print_epoch = True,
     ):
@@ -543,9 +544,6 @@ def trainer(
         )
     best_epoch, best_loss, best_params = best
 
-    flow = equinox.combine(best_params, static)
-    flow = equinox.nn.inference_mode(flow, True)
-
     if stop:
         losses = jnp.array(losses)
         cut = jnp.argwhere(~jnp.isfinite(losses))[:, 1].min()
@@ -560,4 +558,12 @@ def trainer(
         losses = losses[:, :cut]
     losses = {k: v for k, v in zip(('train', 'valid'), losses)}
 
-    return flow, losses
+    best_flow = equinox.combine(best_params, static)
+    best_flow = equinox.nn.inference_mode(best_flow, True)
+    
+    if return_last:
+        last_flow = equinox.combine(params, static)
+        last_flow = equinox.nn.inference_mode(last_flow, True)
+        return losses, best_flow, last_flow
+
+    return losses, best_flow
