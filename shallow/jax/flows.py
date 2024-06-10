@@ -59,8 +59,11 @@ class BoundedFlow(Transformed):
         super().__init__(flow.base_dist, flow.bijection)
         _bounds = []
         for bound in bounds:
-            left = -jnp.inf if bound[0] is None else bound[0]
-            right = jnp.inf if bound[1] is None else bound[1]
+            if bound is None:
+                left, right = -jnp.inf, jnp.inf
+            else:
+                left = -jnp.inf if bound[0] is None else bound[0]
+                right = jnp.inf if bound[1] is None else bound[1]
             _bounds.append([left, right])
         self.bounds = jnp.array(_bounds)
 
