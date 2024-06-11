@@ -14,38 +14,32 @@ class Seed:
 
 
 def get_partition(model, filter_spec = equinox.is_inexact_array):
-    params, static = equinox.partition(
+    return equinox.partition(
         pytree = model,
         filter_spec = filter_spec,
         is_leaf = lambda leaf: isinstance(leaf, NonTrainable),
     )
-    return params, static
 
 
 def get_params(model, filter_spec = equinox.is_inexact_array):
-    params = equinox.filter(
+    return equinox.filter(
         pytree = model,
         filter_spec = filter_spec,
         is_leaf = lambda leaf: isinstance(leaf, NonTrainable),
     )
-    return params
 
 
 def params_to_array(params):
-    array = jax.flatten_util.ravel_pytree(params)[0]
-    return array
+    return jax.flatten_util.ravel_pytree(params)[0]
 
 
 def get_array_to_params(params):
-    array, unflatten = jax.flatten_util.ravel_pytree(params)
-    array_to_params = lambda array: unflatten(array)
-    return array_to_params
+    return jax.flatten_util.ravel_pytree(params)[1]
 
 
 def count_params(model, filter_spec = equinox.is_inexact_array):
     params = get_params(model, filter_spec)
-    num_params = params_to_array(params).size
-    return num_params
+    return params_to_array(params).size
 
 
 def save(file, model, filter_spec = equinox.is_inexact_array):
@@ -59,5 +53,5 @@ def load(file, model, filter_spec = equinox.is_inexact_array):
     array_to_params = get_array_to_params(params)
     array = jnp.load(file)
     params = array_to_params(array)
-    model = equinox.combine(params, static)
-    return model
+    return equinox.combine(params, static)
+
