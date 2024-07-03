@@ -1,29 +1,30 @@
 import jax
 import jax.numpy as jnp
+import equinox
 
 from flowjax.bijections import (
     Chain,
+    Exp,
     Identity,
     Invert,
     Stack,
-    # Affine,
-    Exp,
-    SoftPlus,
     Tanh,
     )
 
-
 # modify flowjax.bijections.Affine to accept any non-zero scale
 from typing import ClassVar
-from jax import Array
-from jax.typing import ArrayLike
-from flowjax.bijections import AbstractBijection
+from jaxtyping import Array, ArrayLike
+from flowjax import wrappers
+from flowjax.bijections.bijection import AbstractBijection
 from flowjax.utils import arraylike_to_array
 
 class Affine(AbstractBijection):
     """Elementwise affine transformation ``y = a*x + b``.
 
     ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
+    By default, we constrain the scale parameter to be postive using ``SoftPlus``, but
+    other parameterizations can be achieved by replacing the scale parameter after
+    construction e.g. using ``eqx.tree_at``.
 
     Args:
         loc: Location parameter. Defaults to 0.
@@ -33,7 +34,7 @@ class Affine(AbstractBijection):
     shape: tuple[int, ...]
     cond_shape: ClassVar[None] = None
     loc: Array
-    scale: Array
+    scale: Array | wrappers.AbstractUnwrappable[Array]
 
     def __init__(
         self,
