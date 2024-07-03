@@ -11,6 +11,7 @@ from flowjax.bijections import (
     Tanh,
     )
 
+
 # modify flowjax.bijections.Affine to accept any non-zero scale
 from typing import ClassVar
 from jaxtyping import Array, ArrayLike
