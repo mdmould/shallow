@@ -1,5 +1,4 @@
 from tqdm.auto import tqdm
-
 import jax
 import jax.numpy as jnp
 import jax_tqdm
@@ -10,7 +9,7 @@ from collections.abc import Sequence
 from itertools import accumulate
 from flowjax.distributions import AbstractDistribution, Transformed
 from flowjax.bijections import Affine, Chain, Invert
-from flowjax.wrappers import NonTrainable
+from flowjax.wrappers import non_trainable
 
 from .transforms import get_post
 from .utils import get_partition, params_to_array, get_array_to_params
@@ -88,13 +87,13 @@ def bound_from_unbound(flow, bounds = None, norms = None):
 
     flow = BoundedFlow(flow, bounds)
     flow = equinox.tree_at(
-        lambda tree: tree.base_dist, flow, replace_fn = NonTrainable,
+        lambda tree: tree.base_dist, flow, replace_fn = non_trainable,
     )
     flow = equinox.tree_at(
-        lambda tree: tree.bijection[-1], flow, replace_fn = NonTrainable,
+        lambda tree: tree.bijection[-1], flow, replace_fn = non_trainable,
     )
     flow = equinox.tree_at(
-        lambda tree: tree.bounds, flow, replace_fn = NonTrainable,
+        lambda tree: tree.bounds, flow, replace_fn = non_trainable,
     )
 
     return flow
@@ -121,114 +120,16 @@ def bound_from_bound(flow, bounds):
 
     flow = BoundedFlow(flow, bounds)
     flow = equinox.tree_at(
-        lambda tree: tree.base_dist, flow, replace_fn = NonTrainable,
+        lambda tree: tree.base_dist, flow, replace_fn = non_trainable,
     )
     flow = equinox.tree_at(
-        lambda tree: tree.bijection[-1], flow, replace_fn = NonTrainable,
+        lambda tree: tree.bijection[-1], flow, replace_fn = non_trainable,
     )
     flow = equinox.tree_at(
-        lambda tree: tree.bounds, flow, replace_fn = NonTrainable,
+        lambda tree: tree.bounds, flow, replace_fn = non_trainable,
     )
     
     return flow
-
-
-# class BoundedFlowTrainable(Transformed):
-#     def __init__(self, flow):
-#         super().__init__(flow.base_dist, flow.bijection)
-
-#     def _log_prob(self, x, condition = None):
-#         lo = self.bijection[-1].loc
-#         hi = lo + self.bijection[-1].scale
-#         pred = jnp.any(jnp.logical_or(x < lo, x > hi))
-#         true_fn = lambda: -INF
-#         false_fn = lambda: super(Transformed, self)._log_prob(x, condition)
-#         return jax.lax.cond(pred, true_fn, false_fn)
-
-# def filter_default(flow, filter_spec = equinox.is_inexact_array):
-#     return jax.tree_util.tree_map(filter_spec, flow)
-
-# def filter_independent(
-#     flow, filter_specs, filter_spec = equinox.is_inexact_array,
-# ):
-#     filter_spec = filter_default(flow, filter_spec)
-#     filter_spec = equinox.tree_at(
-#         lambda tree: tree.distributions, filter_spec, replace = filter_specs,
-#     )
-#     return filter_spec
-    
-# def filter_bounds(filter_spec):
-#     return equinox.tree_at(
-#         lambda tree: tree.bounds, filter_spec, replace = False,
-#     )
-
-# def filter_base(filter_spec):
-#     return equinox.tree_at(
-#         lambda tree: tree.base_dist, filter_spec, replace = False,
-#     )
-
-# def filter_bijection(filter_spec):
-#     return equinox.tree_at(
-#         lambda tree: tree.bijection, filter_spec, replace = False,
-#     )
-
-# def filter_tuple(filter_spec):
-#     return True, filter_spec
-
-
-# def bound_from_unbound(flow, bounds = None, norms = None):
-#     post = get_pre(bounds = bounds, norms = norms)
-#     # base_dist = flow.base_dist
-#     # bijection = Chain([flow.bijection, post])
-#     # flow = Transformed(base_dist, bijection)
-#     # flow = BoundedFlow(flow, bounds)
-#     # flow = equinox.tree_at(
-#     #     lambda flow: flow.base_dist, flow, replace_fn = NonTrainable,
-#     # )
-#     # flow = equinox.tree_at(
-#     #     lambda flow: flow.bijection[-1], flow, replace_fn = NonTrainable,
-#     # )
-#     flow = Transformed(flow, post)
-#     flow = equinox.tree_at(
-#         lambda flow: flow.base_dist.base_dist, flow, replace_fn = NonTrainable,
-#     )
-#     flow = equinox.tree_at(
-#         lambda flow: flow.bijection, flow, replace_fn = NonTrainable,
-#     )
-#     return flow
-
-# def bound_from_bound(flow, bounds, filter_spec):
-#     ndim = flow.shape[0]
-#     if bounds is None:
-#         bounds = jnp.array([jnp.zeros(ndim), jnp.ones(ndim)]).T
-#     assert len(bounds) == ndim
-
-#     lo = flow.base_dist.bijection.transform(jnp.zeros(ndim))
-#     hi = flow.base_dist.bijection.transform(jnp.ones(ndim))
-#     to_unit = Invert(Affine(loc = lo, scale = hi - lo))
-
-#     bounds = jnp.asarray(bounds)
-#     lo = bounds[:, 0]
-#     hi = bounds[:, 1]
-#     from_unit = Affine(loc = lo, scale = hi - lo)
-
-#     base_dist = flow.base_dist
-#     bijection = Chain([flow.bijection, to_unit, from_unit])
-#     flow = Transformed(base_dist, bijection)
-
-#     flow = BoundedFlow(flow, bounds)
-#     filter_spec = filter_default(flow, filter_spec)
-#     filter_spec = equinox.tree_at(
-#         lambda tree: tree.bijection[-1], filter_spec, replace = False,
-#     )
-#     filter_spec = filter_bounds(filter_spec)
-
-#     filter_spec = filter_base(filter_spec)
-#     filter_spec = equinox.tree_at(
-#         lambda tree: tree.bijection[-2], filter_spec, replace = False,
-#     )
-    
-#     return flow, filter_spec
 
 
 def nll(flow, x, c = None):

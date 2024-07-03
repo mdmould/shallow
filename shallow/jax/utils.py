@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox
+
 from flowjax.wrappers import NonTrainable
 
 
