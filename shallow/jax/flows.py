@@ -12,8 +12,7 @@ from flowjax.bijections import Affine, Chain, Invert
 from flowjax.wrappers import non_trainable
 
 from .transforms import get_post
-from .utils import get_partition, params_to_array, get_array_to_params
-
+from .utils import get_partition
 
 INF = jnp.nan_to_num(jnp.inf).item()
 
@@ -209,6 +208,12 @@ def trainer(
     flow = equinox.nn.inference_mode(flow, False)
     params, static = get_partition(flow)
 
+    if loss_fn is None:
+        loss_fn = ce
+    loss_batch = lambda params, *x: loss_fn(equinox.combine(params, static), *x)
+    # loss_and_grad = jax.value_and_grad(loss_batch)
+    loss_and_grad = equinox.filter_value_and_grad(loss_batch)
+
     if opt is None:
         opt = optax.adam if wd is None else optax.adamw
     if callable(opt):
@@ -217,12 +222,6 @@ def trainer(
         else:
             opt = opt(learning_rate=lr, weight_decay=wd)
     state = opt.init(params)
-
-    if loss_fn is None:
-        loss_fn = ce
-    loss_batch = lambda params, *x: loss_fn(equinox.combine(params, static), *x)
-    # loss_and_grad = jax.value_and_grad(loss_batch)
-    loss_and_grad = equinox.filter_value_and_grad(loss_batch)
 
     def train_step(carry, x):
         params, state = carry
