@@ -30,6 +30,6 @@ setup(
         # 'jax_tqdm',
         # 'optax',
         # 'equinox',
-        # 'flowjax>=11.2.0',
+        # 'flowjax>=12.4.0',
         # ],
     )
