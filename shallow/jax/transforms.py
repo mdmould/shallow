@@ -1,116 +1,83 @@
 import jax
 import jax.numpy as jnp
 import equinox
-
 from flowjax.bijections import (
+    AbstractBijection,
+    Affine as AffinePositiveScale,
     Chain,
     Exp,
     Identity,
     Invert,
     Stack,
     Tanh,
+)
+from collections.abc import Callable
+
+
+def Affine(loc = 0, scale = 1):
+    affine = AffinePositiveScale(loc, scale)
+    loc, scale = jnp.broadcast_arrays(
+        affine.loc, jnp.asarray(scale, dtype = float),
     )
+    affine = equinox.tree_at(lambda tree: tree.scale, affine, scale)
+    return affine
 
 
-# modify flowjax.bijections.Affine to accept any non-zero scale
-from typing import ClassVar
-from jaxtyping import Array, ArrayLike
-from flowjax import wrappers
-from flowjax.bijections.bijection import AbstractBijection
-from flowjax.utils import arraylike_to_array
-
-class Affine(AbstractBijection):
-    """Elementwise affine transformation ``y = a*x + b``.
-
-    ``loc`` and ``scale`` should broadcast to the desired shape of the bijection.
-    By default, we constrain the scale parameter to be postive using ``SoftPlus``, but
-    other parameterizations can be achieved by replacing the scale parameter after
-    construction e.g. using ``eqx.tree_at``.
-
-    Args:
-        loc: Location parameter. Defaults to 0.
-        scale: Scale parameter. Defaults to 1.
-    """
-
-    shape: tuple[int, ...]
-    cond_shape: ClassVar[None] = None
-    loc: Array
-    scale: Array | wrappers.AbstractUnwrappable[Array]
-
-    def __init__(
-        self,
-        loc: ArrayLike = 0,
-        scale: ArrayLike = 1,
-    ):
-        self.loc, self.scale = jnp.broadcast_arrays(
-            *(arraylike_to_array(a, dtype=float) for a in (loc, scale)),
-        )
-        self.shape = self.scale.shape
-
-    def transform(self, x, condition=None):
-        return x * self.scale + self.loc
-
-    def transform_and_log_det(self, x, condition=None):
-        return x * self.scale + self.loc, jnp.log(jnp.abs(self.scale)).sum()
-
-    def inverse(self, y, condition=None):
-        return (y - self.loc) / self.scale
-
-    def inverse_and_log_det(self, y, condition=None):
-        return (y - self.loc) / self.scale, -jnp.log(jnp.abs(self.scale)).sum()
+def Logistic(shape = ()):
+    loc = jnp.ones(shape) * 0.5
+    scale = jnp.ones(shape) * 0.5
+    return Chain([Tanh(shape), Affine(loc, scale)])
 
 
-def get_bounder(bounds):
-    # unbounded
+def UnivariateBounder(bounds):
+    # no bounds
     if (bounds is None) or all(bound is None for bound in bounds):
-        bijection = Identity()
-        
-    # one sided bounds
+        return Identity()
+
+    # bounded on one side
     elif any(bound is None for bound in bounds):
-        # right side bounded
+        # bounded on right-hand side
         if bounds[0] is None:
             loc = bounds[1]
             scale = -1
-        # left side bounded
+        # bounded on left-hand side
         elif bounds[1] is None:
             loc = bounds[0]
             scale = 1
-        constraint = Exp()
-        reflect = Affine(loc, scale)
-        bijection = Chain([constraint, reflect])
-        
-    # two sided bounds
-    ## TODO: try normal CDF instead
+        return Chain([Exp(), Affine(loc, scale)])
+
+    # bounded on both sides
     else:
         loc = bounds[0]
         scale = bounds[1] - bounds[0]
-        constraint = Tanh()
-        rescale = Affine(0.5 * scale + loc, 0.5 * scale)
-        bijection = Chain([constraint, rescale])
-
-    return bijection
+        return Chain([Logistic(), Affine(loc, scale)])
 
 
-def get_normer(norms):
-    mean = jnp.mean(norms, axis=0)
-    std = jnp.std(norms, axis=0)
-    loc = - mean / std
-    scale = 1 / std
-    return Affine(loc, scale)
+def Bounder(bounds):
+    return Stack(list(map(UnivariateBounder, bounds)))
 
 
-def get_post(bounds = None, norms = None):
+def Colourer(norms):
+    mean = jnp.mean(norms, axis = 0)
+    std = jnp.std(norms, axis = 0)
+    return Affine(loc = mean, scale = std)
+
+
+def Whitener(norms):
+    return Invert(Colouring)
+
+
+def ColourAndBound(bounds = None, norms = None):
     if bounds is None and norms is None:
         return Identity()
     elif bounds is not None and norms is None:
-        return Stack(list(map(get_bounder, bounds)))
+        return Bounder(bounds)
     elif bounds is None and norms is not None:
-        return Invert(get_normer(norms))
+        return Colourer(norms)
     else:
-        bounder = Stack(list(map(get_bounder, bounds)))
-        debounded_norms = jax.vmap(bounder.inverse)(norms)
-        denormer = Invert(get_normer(debounded_norms))
-        return Chain([denormer, bounder])
+        bounder = Bounder(bounds)
+        colourer = Colourer(jax.vmap(bounder.inverse)(norms))
+        return Chain([colourer, bounder])
 
 
 def get_post_stack1d(bounds = None, norms = None):
@@ -127,5 +94,36 @@ def get_post_stack1d(bounds = None, norms = None):
             debounded_norm = jax.vmap(bounder.inverse)(norm)
             denormer = Invert(get_normer(debounded_norm))
             pres.append(Chain([denormer, bounder]))
-        return Stack(pres)        
+        return Stack(pres)  
+
+
+class UnivariateEmpirical(AbstractBijection):
+    shape: tuple
+    cond_shape: None = None
+    _transform: Callable
+    _inverse: Callable
+
+    def __init__(self, samples, bounds):
+        bounds = jnp.nan_to_num(jnp.asarray(bounds))
+        fp = jnp.sort(jnp.append(samples, bounds))
+        xp = jnp.linspace(0, 1, fp.size)
+        self._transform = lambda x: jnp.interp(x, xp, fp)
+        self._inverse = lambda y: jnp.interp(y, fp, xp)
+        self.shape = ()
+
+    def transform(self, x, condition = None):
+        return self._transform(x)
+
+    def transform_and_log_det(self, x, condition = None):
+        return
+
+    def inverse(self, y, condition = None):
+        return self._inverse(y)
+
+    def inverse_and_log_det(self, y, condition = None):
+        return
+
+
+def Empirical(samples, bounds):
+    return Stack(list(map(UnivariateEmpirical, samples.T, bounds)))
     
