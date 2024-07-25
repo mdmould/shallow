@@ -29,7 +29,7 @@ def Logistic(shape = ()):
     return Chain([Tanh(shape), Affine(loc, scale)])
 
 
-def UnivariateBounder(bounds):
+def UnivariateBounder(bounds = None):
     # no bounds
     if (bounds is None) or all(bound is None for bound in bounds):
         return Identity()
@@ -57,14 +57,14 @@ def Bounder(bounds):
     return Stack(list(map(UnivariateBounder, bounds)))
 
 
-def Colourer(norms):
+def Colour(norms):
     mean = jnp.mean(norms, axis = 0)
     std = jnp.std(norms, axis = 0)
     return Affine(loc = mean, scale = std)
 
 
-def Whitener(norms):
-    return Invert(Colouring)
+def Whiten(norms):
+    return Invert(Colour)
 
 
 def ColourAndBound(bounds = None, norms = None):
@@ -73,11 +73,11 @@ def ColourAndBound(bounds = None, norms = None):
     elif bounds is not None and norms is None:
         return Bounder(bounds)
     elif bounds is None and norms is not None:
-        return Colourer(norms)
+        return Colour(norms)
     else:
         bounder = Bounder(bounds)
-        colourer = Colourer(jax.vmap(bounder.inverse)(norms))
-        return Chain([colourer, bounder])
+        colour = Colour(jax.vmap(bounder.inverse)(norms))
+        return Chain([colour, bounder])
 
 
 def get_post_stack1d(bounds = None, norms = None):
@@ -126,4 +126,4 @@ class UnivariateEmpirical(AbstractBijection):
 
 def Empirical(samples, bounds):
     return Stack(list(map(UnivariateEmpirical, samples.T, bounds)))
-    
+
