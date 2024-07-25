@@ -94,36 +94,5 @@ def get_post_stack1d(bounds = None, norms = None):
             debounded_norm = jax.vmap(bounder.inverse)(norm)
             denormer = Invert(get_normer(debounded_norm))
             pres.append(Chain([denormer, bounder]))
-        return Stack(pres)  
-
-
-class UnivariateEmpirical(AbstractBijection):
-    shape: tuple
-    cond_shape: None = None
-    _transform: Callable
-    _inverse: Callable
-
-    def __init__(self, samples, bounds):
-        bounds = jnp.nan_to_num(jnp.asarray(bounds))
-        fp = jnp.sort(jnp.append(samples, bounds))
-        xp = jnp.linspace(0, 1, fp.size)
-        self._transform = lambda x: jnp.interp(x, xp, fp)
-        self._inverse = lambda y: jnp.interp(y, fp, xp)
-        self.shape = ()
-
-    def transform(self, x, condition = None):
-        return self._transform(x)
-
-    def transform_and_log_det(self, x, condition = None):
-        return
-
-    def inverse(self, y, condition = None):
-        return self._inverse(y)
-
-    def inverse_and_log_det(self, y, condition = None):
-        return
-
-
-def Empirical(samples, bounds):
-    return Stack(list(map(UnivariateEmpirical, samples.T, bounds)))
+        return Stack(pres)
 
