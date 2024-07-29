@@ -5,49 +5,16 @@ import jax_tqdm
 import equinox
 import optax
 
-from collections.abc import Sequence
-from itertools import accumulate
 from flowjax.distributions import AbstractDistribution, Transformed
 from flowjax.bijections import Affine, Chain, Invert
 from flowjax.wrappers import non_trainable
 
-from .transforms import get_post
+from .distributions import BoundedDistribution
+from .transforms import ColourAndBound
 from .utils import get_partition
 
+
 INF = jnp.nan_to_num(jnp.inf).item()
-
-
-class Independent(AbstractDistribution):
-    shape: tuple[int]
-    cond_shape: None
-    split_idxs: tuple[int, ...]
-    distributions: Sequence[AbstractDistribution]
-
-    def __init__(self, distributions):
-        shapes = [d.shape for d in distributions]
-        for s in shapes:
-            assert len(s) == 1
-        sizes = [s[0] for s in shapes]
-        self.shape = (sum(sizes),)
-        self.cond_shape = None
-        self.split_idxs = tuple(accumulate(sizes[:-1]))
-        self.distributions = distributions
-
-    def _log_prob(self, x, condition = None):
-        xs = jnp.array_split(x, self.split_idxs)
-        log_probs = [
-            d._log_prob(x)
-            for d, x in zip(self.distributions, xs, strict = True)
-        ]
-        return sum(log_probs)
-
-    def _sample(self, key, condition = None):
-        keys = jax.random.split(key, len(self.distributions))
-        samples = [
-            d._sample(k)
-            for d, k in zip(self.distributions, keys, strict = True)
-        ]
-        return jnp.concatenate(samples)        
 
 
 class BoundedFlow(Transformed):
@@ -77,14 +44,15 @@ class BoundedFlow(Transformed):
 def bound_from_unbound(flow, bounds = None, norms = None):
     if bounds is None and norms is None:
         return flow
-    
-    post = get_post(bounds, norms)
+
+    post = ColourAndBound(bounds, norms)
     flow = Transformed(
         flow.base_dist,
         Chain([flow.bijection, post]),
     )
 
-    flow = BoundedFlow(flow, bounds)
+    # flow = BoundedFlow(flow, bounds)
+    flow = BoundedDistribution(flow, bounds, inf = False)
     flow = equinox.tree_at(
         lambda tree: tree.base_dist, flow, replace_fn = non_trainable,
     )
