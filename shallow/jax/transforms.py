@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox
+import interpax
 
 from flowjax.bijections import (
     AbstractBijection,
@@ -9,12 +10,10 @@ from flowjax.bijections import (
     Exp,
     Identity,
     Invert,
+    RationalQuadraticSpline,
     Stack,
     Tanh,
 )
-
-import interpax
-from interpax._coefs import A_CUBIC
 
 from collections.abc import Callable
 
@@ -120,31 +119,39 @@ class StandardNormalCDF(AbstractBijection):
         return x, -jax.scipy.stats.norm.logpdf(x)
 
 
-from flowjax.bijections import RationalQuadraticSpline
-
-def RationalQuadraticSplineCDF(samples):
+def UnivariateRationalQuadraticSplineCDF(samples, bounds = None):
     assert len(samples.shape) == 1
-    assert samples.min() >= 0
-    assert samples.max() <= 1
 
-    points = jnp.unique(jnp.append(samples, jnp.array([0, 1])))
+    if bounds is None:
+        bounds = -jnp.inf, jnp.inf
+    else:
+        assert len(bounds) == 2
+        left = -jnp.inf if bounds[0] is None else bounds[0]
+        right = jnp.inf if bounds[1] is None else bounds[1]
+        bounds = left, right
+    bounds = jnp.unique(jnp.nan_to_num(jnp.array(bounds)))
+    assert bounds.shape == (2,)
+
+    affine = Invert(Affine(loc = bounds[0], scale = bounds[1] - bounds[0]))
+
+    points = jnp.unique(jnp.append(samples, bounds))
+    points = jax.vmap(affine.transform)(points)
     cdf = jnp.linspace(0, 1, points.size)
     interp = interpax.Interpolator1D(points, cdf, method = 'monotonic')
 
-    bijection = RationalQuadraticSpline(
+    rqs = RationalQuadraticSpline(
         knots = points.size,
         interval = (0, 1),
         min_derivative = 0,
         softmax_adjust = 0,
     )
-
-    bijection = equinox.tree_at(lambda tree: tree.x_pos, bijection, interp.x)
-    bijection = equinox.tree_at(lambda tree: tree.y_pos, bijection, interp.f)
-    bijection = equinox.tree_at(
-        lambda tree: tree.derivatives, bijection, interp.derivs['fx'],
+    rqs = equinox.tree_at(lambda tree: tree.x_pos, rqs, interp.x)
+    rqs = equinox.tree_at(lambda tree: tree.y_pos, rqs, interp.f)
+    rqs = equinox.tree_at(
+        lambda tree: tree.derivatives, rqs, interp.derivs['fx'],
     )
 
-    return bijection
+    return Chain([affine, rqs])
 
 
 class UnivariateEmpiricalCDF(AbstractBijection):
@@ -153,6 +160,8 @@ class UnivariateEmpiricalCDF(AbstractBijection):
     _interp: interpax.Interpolator1D
 
     def __init__(self, samples, bounds = None):
+        from interpax._coefs import A_CUBIC
+
         assert len(samples.shape) == 1
         self.shape = ()
 
@@ -163,7 +172,8 @@ class UnivariateEmpiricalCDF(AbstractBijection):
             left = -jnp.inf if bounds[0] is None else bounds[0]
             right = jnp.inf if bounds[1] is None else bounds[1]
             bounds = left, right
-        bounds = jnp.nan_to_num(jnp.array(bounds))
+        bounds = jnp.unique(jnp.nan_to_num(jnp.array(bounds)))
+        assert bounds.shape == (2,)
         
         points = jnp.unique(jnp.append(samples, bounds))
         cdf = jnp.linspace(0, 1, points.size)
