@@ -164,7 +164,7 @@ def RationalQuadraticSplineCDF(samples, bounds = None):
     )))
 
 
-class UnivariateEmpiricalCDF(AbstractBijection):
+class UnivariateCubicSplineCDF(AbstractBijection):
     shape: tuple
     cond_shape: None = None
     _interp: interpax.Interpolator1D
@@ -257,7 +257,7 @@ class UnivariateEmpiricalCDF(AbstractBijection):
         return x, -jnp.log(jnp.abs(self._interp(x, 1)))
 
 
-def EmpiricalCDF(samples, bounds = None):
+def CubicSplineCDF(samples, bounds = None):
     samples = jnp.asarray(samples)
     assert len(samples.shape) == 2
     bounds = [None] * samples.shape[1] if bounds is None else bounds
@@ -265,7 +265,7 @@ def EmpiricalCDF(samples, bounds = None):
     return Stack(list(map(UnivariateEmpiricalCDF, samples.T, bounds)))
 
 
-class _EmpiricalCDF(AbstractBijection):
+class _CubicSplineCDF(AbstractBijection):
     shape: tuple
     cond_shape: None = None
     _bijections: tuple[UnivariateEmpiricalCDF, ...]
