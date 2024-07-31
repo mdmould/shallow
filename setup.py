@@ -30,7 +30,7 @@ setup(
         # 'jax_tqdm',
         # 'optax',
         # 'equinox',
-        # 'flowjax>=12.4.0',
+        # 'flowjax>=13.0.0',
         # 'interpax',
         # ],
     )

@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 import equinox
-import interpax
 
 from flowjax.bijections import (
     AbstractBijection,
@@ -13,6 +12,9 @@ from flowjax.bijections import (
     Stack,
     Tanh,
 )
+
+import interpax
+from interpax._coefs import A_CUBIC
 
 from collections.abc import Callable
 
@@ -118,6 +120,33 @@ class StandardNormalCDF(AbstractBijection):
         return x, -jax.scipy.stats.norm.logpdf(x)
 
 
+from flowjax.bijections import RationalQuadraticSpline
+
+def RationalQuadraticSplineCDF(samples):
+    assert len(samples.shape) == 1
+    assert samples.min() >= 0
+    assert samples.max() <= 1
+
+    points = jnp.unique(jnp.append(samples, jnp.array([0, 1])))
+    cdf = jnp.linspace(0, 1, points.size)
+    interp = interpax.Interpolator1D(points, cdf, method = 'monotonic')
+
+    bijection = RationalQuadraticSpline(
+        knots = points.size,
+        interval = (0, 1),
+        min_derivative = 0,
+        softmax_adjust = 0,
+    )
+
+    bijection = equinox.tree_at(lambda tree: tree.x_pos, bijection, interp.x)
+    bijection = equinox.tree_at(lambda tree: tree.y_pos, bijection, interp.f)
+    bijection = equinox.tree_at(
+        lambda tree: tree.derivatives, bijection, interp.derivs['fx'],
+    )
+
+    return bijection
+
+
 class UnivariateEmpiricalCDF(AbstractBijection):
     shape: tuple
     cond_shape: None = None
@@ -144,70 +173,64 @@ class UnivariateEmpiricalCDF(AbstractBijection):
         return self._interp(x)
 
     def transform_and_log_det(self, x, condition = None):
-        return self._interp(x), jnp.log(jnp.abs(self._interp(x, 1)))
+        return self.transform(x), jnp.log(jnp.abs(self._interp(x, 1)))
 
     def inverse(self, y, condition = None):
-        i = jnp.searchsorted(self._interp.f, y, side = 'right')
-        x0 = self._interp.x[i-1:i+1].mean()
-
-        from jax.scipy.optimize import minimize
-        return jnp.squeeze(minimize(
-            lambda x: (self.transform(jnp.squeeze(x)) - y) ** 2,
-            jnp.atleast_1d(x0),
-            method = 'BFGS',
-        ).x)
-
-        import optimistix
-        return optimistix.root_find(
-            lambda x, args: self.transform(x) - y,
-            optimistix.Bisection(rtol = 1e-5, atol = 1e-5),
-            x0,
-            options = dict(
-                lower = self._interp.x[i - 1], upper = self._interp.x[i],
-            ),
-        ).value
-
         fq = y
         x = self._interp.x
         f = self._interp.f
         fx = self._interp.derivs['fx']
-                
-        i = jnp.clip(jnp.searchsorted(f, fq, side = 'right'), 1, len(f) - 1)
+
+        i = jnp.searchsorted(f, fq, side = 'right')
+
+        def find_root():
+            dx = x[i] - x[i - 1]
+            dxi = jnp.where(dx == 0, 0, 1 / dx)
+
+            f0 = f[i - 1]
+            f1 = f[i]
+            fx0 = fx[i - 1] * dx
+            fx1 = fx[i] * dx
         
-        dx = x[i] - x[i - 1]
-        dxi = jnp.where(dx == 0, 0, 1 / dx)
-
-        # f0 = jnp.take(f, i - 1)
-        # f1 = jnp.take(f, i)
-        # fx0 = (jnp.take(fx, i - 1).T * dx).T
-        # fx1 = (jnp.take(fx, i).T * dx).T
-        f0 = f[i - 1]
-        f1 = f[i]
-        fx0 = fx[i - 1] * dx
-        fx1 = fx[i] * dx
+            F = jnp.stack([f0, f1, fx0, fx1])
+            coef = jnp.matmul(A_CUBIC, F)
     
-        from interpax._coefs import A_CUBIC
-        # F = jnp.stack([f0, f1, fx0, fx1], axis = 0).T
-        # coef = jnp.vectorize(jnp.matmul, signature = '(n,n),(n)->(n)')(A_CUBIC, F).T
-        F = jnp.stack([f0, f1, fx0, fx1])
-        coef = jnp.matmul(A_CUBIC, F)
+            dt, ct, bt, at = coef
+            xi = x[i - 1]
+    
+            a = at * dxi ** 3
+            b = bt * dxi ** 2 - 3 * at * xi * dxi ** 3
+            c = ct * dxi - 2 * bt * xi * dxi ** 2 + 3 * at * xi ** 2 * dxi ** 3
+            d = dt - ct * xi * dxi + bt * xi ** 2 * dxi ** 2 - at * xi ** 3 * dxi ** 3
 
-        dt, ct, bt, at = coef
-        xi = x[i - 1]
+            d = d - fq
+    
+            roots = jnp.roots(jnp.array([a, b, c, d]), strip_zeros = False)
+    
+            # p = (3 * a * c - b ** 2) / (3 * a ** 2)
+            # q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
+            # u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+            # u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+            # tq = jnp.cbrt(u1) + jnp.cbrt(u2)
+            # xq = tq - b / (3 * a)
+    
+            # d0 = b ** 2 - 3 * a * c
+            # d1 = 2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d
+            # cp = jnp.cbrt((d1 + jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
+            # cm = jnp.cbrt((d1 - jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
+            # C = jnp.where(cp == 0, cm, cp)
+            # d0_over_C = jnp.where(C == 0, 0, d0 / C)
+            # k = jnp.arange(3)
+            # xi = (-1 + 3 ** 0.5 * 1j) / 2
+            # roots = -(b + xi ** k * C + d0_over_C / xi ** k) / (3 * a)
+    
+            roots = jnp.where(roots.imag == 0, roots.real, jnp.inf)
+            roots = jnp.where((x[i - 1] < roots) * (roots < x[i]), roots, jnp.inf)
+            xq = jnp.min(roots)
 
-        a = at * dxi ** 3
-        b = bt * dxi ** 2 - 3 * at * xi * dxi ** 3
-        c = ct * dxi - 2 * bt * xi * dxi ** 2 + 3 * at * xi ** 2 * dxi ** 3
-        d = dt - ct * xi * dxi + bt * xi ** 2 * dxi ** 2 - at * xi ** 3 * dxi ** 3
+            return xq
 
-        p = (3 * a * c - b ** 2) / (3 * a ** 2)
-        q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
-        u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
-        u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
-        tq = jnp.cbrt(u1) + jnp.cbrt(u2)
-        xq = tq - b / (3 * a)
-
-        return xq
+        return jax.lax.cond(fq == f[i - 1], lambda: x[i - 1], find_root)
 
     def inverse_and_log_det(self, y, condition = None):
         x = self.inverse(y)
