@@ -117,15 +117,17 @@ class NamedDistribution(ParentDistribution):
         self.cond_names = cond_names
 
     def log_prob(self, x, condition = None):
-        x = jnp.array(list(x.values())).T
+        x = jnp.array(list(x.values()))
+        x = jnp.moveaxis(x, 0, -1)
         if self.cond_shape is not None:
-            condition = jnp.array(list(condition.values())).T
+            condition = jnp.array(list(condition.values()))
+            condition = jnp.moveaxis(condition, 0, -1)
         return self.distribution.log_prob(x, condition)
 
     def sample(self, key, sample_shape = (), condition = None):
         if self.cond_shape is not None:
-            condition = jnp.array(list(condition.values())).T
+            condition = jnp.array(list(condition.values()))
+            condition = jnp.moveaxis(condition, 0, -1)
         x = self.distribution.sample(key, sample_shape, condition)
         x = jnp.moveaxis(x, -1, 0)
         return dict(zip(self.names, x))
-
