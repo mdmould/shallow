@@ -4,8 +4,8 @@ nflows @ git+https://github.com/bayesiains/nflows.git
 pyro-ppl
 numpyro
 jax
-jax_tqdm
+jax-tqdm
 optax
 equinox
 flowjax>=12.4.0
-
+interpax

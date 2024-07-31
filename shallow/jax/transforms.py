@@ -13,6 +13,9 @@ from flowjax.bijections import (
     Tanh,
 )
 
+import interpax
+from interpax._coefs import A_CUBIC
+
 from collections.abc import Callable
 
 
@@ -99,14 +102,28 @@ def ColourAndBound(bounds = None, norms = None):
 #         return Stack(pres)
 
 
-## TODO: interpolation with well-defined derivatives
-## monotonic PCHIP
-## TODO: add probit after CDF transform
-class UnivariateEmpirical(AbstractBijection):
+class StandardNormalCDF(AbstractBijection):
+    shape: tuple[int, ...] = ()
+    cond_shape: None = None
+
+    def transform(self, x, condition = None):
+        return jax.scipy.stats.norm.cdf(x)
+
+    def transform_and_log_det(self, x, condition = None):
+        return self.transform(x), jax.scipy.stats.norm.logpdf(x)
+
+    def inverse(self, y, condition = None):
+        return jax.scipy.stats.norm.ppf(y)
+
+    def inverse_and_log_det(self, y, condition = None):
+        x = self.inverse(y)
+        return x, -jax.scipy.stats.norm.logpdf(x)
+
+
+class UnivariateEmpiricalCDF(AbstractBijection):
     shape: tuple
     cond_shape: None = None
-    _transform: Callable
-    _inverse: Callable
+    _interp: interpax.Interpolator1D
 
     def __init__(self, samples, bounds = None):
         assert len(samples.shape) == 1
@@ -121,43 +138,85 @@ class UnivariateEmpirical(AbstractBijection):
             bounds = left, right
         bounds = jnp.nan_to_num(jnp.array(bounds))
         
-        points = jnp.sort(jnp.append(samples, bounds))
+        points = jnp.unique(jnp.append(samples, bounds))
         cdf = jnp.linspace(0, 1, points.size)
-        self._transform = lambda x: jnp.interp(x, points, cdf)
-        self._inverse = lambda y: jnp.interp(y, cdf, points)
+        self._interp = interpax.Interpolator1D(points, cdf, method = 'monotonic')
 
     def transform(self, x, condition = None):
-        return self._transform(x)
+        return self._interp(x)
 
     def transform_and_log_det(self, x, condition = None):
-        y = self.transform(x)
-        grad = jax.grad(self._transform)(x)
-        return y, jnp.log(jnp.abs(grad))
+        return self._interp(x), jnp.log(jnp.abs(self._interp(x, 1)))
 
     def inverse(self, y, condition = None):
-        return self._inverse(y)
+        fq = y
+        x = self._interp.x
+        f = self._interp.f
+        fx = self._interp.derivs['fx']
+                
+        i = jnp.clip(jnp.searchsorted(f, fq, side = 'right'), 1, len(f) - 1)
+        
+        dx = x[i] - x[i - 1]
+        dxi = jnp.where(dx == 0, 0, 1 / dx)
+
+        # f0 = jnp.take(f, i - 1)
+        # f1 = jnp.take(f, i)
+        # fx0 = (jnp.take(fx, i - 1).T * dx).T
+        # fx1 = (jnp.take(fx, i).T * dx).T
+        f0 = f[i - 1]
+        f1 = f[i]
+        fx0 = fx[i - 1] * dx
+        fx1 = fx[i] * dx
+    
+        F = jnp.stack([f0, f1, fx0, fx1], axis = 0).T
+        coef = jnp.vectorize(jnp.matmul, signature = '(n,n),(n)->(n)')(A_CUBIC, F).T
+
+        dt, ct, bt, at = coef
+        xi = x[i - 1]
+        a = at * dxi ** 3
+        b = bt * dxi ** 2 - 3 * a * xi
+        c = ct * dxi - 2 * b * xi - xi ** 2
+        d = dt - c * xi - b * xi ** 2 * b - a * xi ** 3
+        d = d - y
+        
+        p = (3 * a * c - b ** 2) / (3 * a ** 2)
+        q = (2 * b ** 3 - 9 * a * b * c + 27 * a **2 * d) / (27 * a **3)
+        u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+        u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+        tq = jnp.cbrt(u1) + jnp.cbrt(u2)
+        xq = tq - b / (3 * a)
+
+        return xq, a, b, c, d
 
     def inverse_and_log_det(self, y, condition = None):
         x = self.inverse(y)
-        grad = jax.grad(self._inverse)(y)
-        return x, jnp.log(jnp.abs(grad))
+        return x, -jnp.log(jnp.abs(self._interp(x, 1)))
 
 
-def Empirical(samples, bounds):
-    return Stack(list(map(UnivariateEmpirical, jnp.asarray(samples).T, bounds)))
+def EmpiricalCDF(samples, bounds = None):
+    samples = jnp.asarray(samples)
+    assert len(samples.shape) == 2
+    bounds = [None] * samples.shape[1] if bounds is None else bounds
+    assert len(bounds) == samples.shape[1]
+    return Stack(list(map(
+        UnivariateEmpiricalCDF, jnp.asarray(samples).T, bounds,
+    )))
 
 
-class Empirical(AbstractBijection):
+class _EmpiricalCDF(AbstractBijection):
     shape: tuple
     cond_shape: None = None
-    _bijections: tuple[UnivariateEmpirical]
+    _bijections: tuple[UnivariateEmpiricalCDF, ...]
 
     def __init__(self, samples, bounds):
         samples = jnp.asarray(samples)
         assert len(samples.shape) == 2
-        self.shape = samples.shape[1]
-        assert len(bounds) == self.shape
-        self._bijections = tuple(map(UnivariateEmpirical, samples.T, bounds))
+        self.shape = (samples.shape[1],)
+        bounds = [None] * samples.shape[1] if bounds is None else bounds
+        assert len(bounds) == self.shape[0]
+        self._bijections = tuple(map(
+            UnivariateEmpiricalCDF, samples.T, bounds,
+        ))
 
     def transform(self, x, condition = None):
         single = lambda bijection, x: bijection.transform(x)
@@ -178,4 +237,3 @@ class Empirical(AbstractBijection):
         single = lambda bijection, y: bijection.inverse_and_log_det(y)
         xs, log_dets = zip(*map(single, self._bijections, y.T))
         return jnp.stack(xs, axis = -1), sum(log_dets)
-

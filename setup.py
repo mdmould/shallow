@@ -31,5 +31,6 @@ setup(
         # 'optax',
         # 'equinox',
         # 'flowjax>=12.4.0',
+        # 'interpax',
         # ],
     )
