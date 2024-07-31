@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox
+import interpax
 
 from flowjax.bijections import (
     AbstractBijection,
@@ -12,9 +13,6 @@ from flowjax.bijections import (
     Stack,
     Tanh,
 )
-
-import interpax
-from interpax._coefs import A_CUBIC
 
 from collections.abc import Callable
 
@@ -149,6 +147,26 @@ class UnivariateEmpiricalCDF(AbstractBijection):
         return self._interp(x), jnp.log(jnp.abs(self._interp(x, 1)))
 
     def inverse(self, y, condition = None):
+        i = jnp.searchsorted(self._interp.f, y, side = 'right')
+        x0 = self._interp.x[i-1:i+1].mean()
+
+        from jax.scipy.optimize import minimize
+        return jnp.squeeze(minimize(
+            lambda x: (self.transform(jnp.squeeze(x)) - y) ** 2,
+            jnp.atleast_1d(x0),
+            method = 'BFGS',
+        ).x)
+
+        import optimistix
+        return optimistix.root_find(
+            lambda x, args: self.transform(x) - y,
+            optimistix.Bisection(rtol = 1e-5, atol = 1e-5),
+            x0,
+            options = dict(
+                lower = self._interp.x[i - 1], upper = self._interp.x[i],
+            ),
+        ).value
+
         fq = y
         x = self._interp.x
         f = self._interp.f
@@ -168,25 +186,28 @@ class UnivariateEmpiricalCDF(AbstractBijection):
         fx0 = fx[i - 1] * dx
         fx1 = fx[i] * dx
     
-        F = jnp.stack([f0, f1, fx0, fx1], axis = 0).T
-        coef = jnp.vectorize(jnp.matmul, signature = '(n,n),(n)->(n)')(A_CUBIC, F).T
+        from interpax._coefs import A_CUBIC
+        # F = jnp.stack([f0, f1, fx0, fx1], axis = 0).T
+        # coef = jnp.vectorize(jnp.matmul, signature = '(n,n),(n)->(n)')(A_CUBIC, F).T
+        F = jnp.stack([f0, f1, fx0, fx1])
+        coef = jnp.matmul(A_CUBIC, F)
 
         dt, ct, bt, at = coef
         xi = x[i - 1]
+
         a = at * dxi ** 3
-        b = bt * dxi ** 2 - 3 * a * xi
-        c = ct * dxi - 2 * b * xi - xi ** 2
-        d = dt - c * xi - b * xi ** 2 * b - a * xi ** 3
-        d = d - y
-        
+        b = bt * dxi ** 2 - 3 * at * xi * dxi ** 3
+        c = ct * dxi - 2 * bt * xi * dxi ** 2 + 3 * at * xi ** 2 * dxi ** 3
+        d = dt - ct * xi * dxi + bt * xi ** 2 * dxi ** 2 - at * xi ** 3 * dxi ** 3
+
         p = (3 * a * c - b ** 2) / (3 * a ** 2)
-        q = (2 * b ** 3 - 9 * a * b * c + 27 * a **2 * d) / (27 * a **3)
+        q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
         u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
         u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
         tq = jnp.cbrt(u1) + jnp.cbrt(u2)
         xq = tq - b / (3 * a)
 
-        return xq, a, b, c, d
+        return xq
 
     def inverse_and_log_det(self, y, condition = None):
         x = self.inverse(y)
