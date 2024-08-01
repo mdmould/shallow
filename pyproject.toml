@@ -1,0 +1,36 @@
+[build-system]
+requires = [ "setuptools >= 61.0" ]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shallow"
+version = "0.3.2"
+authors = [
+    { name = "Matthew Mould", email = "mattdmould@gmail.com" },
+]
+description = "shallow wrappers around machine learning packages"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # 'numpy',
+    # 'tqdm',
+    # 'tensorflow',
+    # 'torch',
+    # 'nflows @ git+https://github.com/bayesiains/nflows.git',
+    # 'pyro-ppl',
+    # 'numpyro',
+    # 'jax',
+    # 'jax-tqdm',
+    # 'optax',
+    # 'equinox',
+    # 'flowjax>=13.0.0',
+    # 'interpax',
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/mdmould/shallow"
