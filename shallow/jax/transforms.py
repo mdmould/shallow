@@ -13,7 +13,6 @@ from flowjax.bijections import (
     RationalQuadraticSpline,
     Stack,
     Tanh,
-    Vmap,
 )
 
 from collections.abc import Callable
@@ -24,7 +23,8 @@ def Affine(loc = 0, scale = 1):
     loc, scale = jnp.broadcast_arrays(
         affine.loc, jnp.asarray(scale, dtype = float),
     )
-    return equinox.tree_at(lambda tree: tree.scale, affine, scale)
+    affine = equinox.tree_at(lambda tree: tree.scale, affine, scale)
+    return affine
 
 
 def Logistic(shape = ()):
@@ -119,13 +119,19 @@ class StandardNormalCDF(AbstractBijection):
         return x, -jax.scipy.stats.norm.logpdf(x).sum()
 
 
-def _construct_UnivariateUnitRationalQuadraticSplineCDF(samples):
+def UnivariateUnitRationalQuadraticSplineCDF(samples):
+    samples = jnp.asarray(samples)
+    assert len(samples.shape) == 1
+
     bounds = jnp.array([0, 1])
-    points = jnp.sort(jnp.append(samples, bounds))
+    assert samples.min() >= bounds[0]
+    assert samples.max() <= bounds[1]
+
+    points = jnp.unique(jnp.append(samples, bounds))
     cdfs = jnp.linspace(0, 1, points.size)
     interp = interpax.Interpolator1D(points, cdfs, method = 'monotonic')
     derivs = interp.derivs['fx']
-    
+
     rqs = RationalQuadraticSpline(
         knots = points.size,
         interval = (0, 1),
@@ -140,17 +146,6 @@ def _construct_UnivariateUnitRationalQuadraticSplineCDF(samples):
     return rqs
 
 
-def UnivariateUnitRationalQuadraticSplineCDF(samples):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 1
-    assert jnp.unique(samples).size == samples.size
-    
-    assert samples.min() > 0
-    assert samples.max() < 1
-    
-    return _construct_UnivariateUnitRationalQuadraticSplineCDF(points)
-
-
 def _construct_bounds(bounds):
     if bounds is None:
         left, right = -jnp.inf, jnp.inf
@@ -158,21 +153,20 @@ def _construct_bounds(bounds):
         assert len(bounds) == 2
         left = -jnp.inf if bounds[0] is None else bounds[0]
         right = jnp.inf if bounds[1] is None else bounds[1]
-    _bounds = jnp.unique(jnp.array([left, right]))
-    assert _bounds.shape == (2,)
-    return jnp.nan_to_num(_bounds)
+    bounds = jnp.nan_to_num(jnp.unique(jnp.array([left, right])))
+    assert bounds.shape == (2,)
+    return bounds
 
 
 def UnivariateRationalQuadraticSplineCDF(samples, bounds = None):
     samples = jnp.asarray(samples)
     assert len(samples.shape) == 1
-    
     bounds = _construct_bounds(bounds)
-    affine = Affine(loc = bounds[0], scale = bounds[1] - bounds[0])
 
+    affine = Affine(loc = bounds[0], scale = bounds[1] - bounds[0])
     unit_samples = jax.vmap(affine.inverse)(samples)
     spline = UnivariateUnitRationalQuadraticSplineCDF(unit_samples)
-    
+
     return Chain([Invert(affine), spline])
 
 
@@ -183,33 +177,14 @@ def RationalQuadraticSplineCDF(samples, bounds = None):
     bounds = [None] * samples.shape[1] if bounds is None else bounds
     assert len(bounds) == samples.shape[1]
     bounds = jnp.array(list(map(_construct_bounds, bounds)))
-    assert (samples.min(axis = 0) > bounds[:, 0]).all()
-    assert (samples.max(axis = 0) < bounds[:, 1]).all()
 
     affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
-    splines = list(map
-
-
-def VmapRationalQuadraticSplineCDF(samples, bounds = None):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 2
-    assert all(map(
-        lambda samples: jnp.unique(samples).size == samples.size, samples.T,
+    splines = list(map(
+        UnivariateUnitRationalQuadraticSplineCDF,
+        jax.vmap(affine.inverse)(samples).T,
     ))
 
-    bounds = [None] * samples.shape[1] if bounds is None else bounds
-    assert len(bounds) == samples.shape[1]
-    bounds = jnp.array(list(map(_construct_bounds, bounds)))
-    assert (samples.min(axis = 0) > bounds[:, 0]).all()
-    assert (samples.max(axis = 0) < bounds[:, 1]).all()
-
-    affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
-    splines = equinox.filter_vmap(
-        _construct_UnivariateUnitRationalQuadraticSplineCDF,
-    )(jax.vmap(affine.inverse)(samples).T)
-    spline = Vmap(splines, in_axes = equinox.if_array(0))
-
-    return Chain([Invert(affine), spline])
+    return Chain([Invert(affine), Stack(splines)])
 
 
 class UnivariateCubicSplineCDF(AbstractBijection):
