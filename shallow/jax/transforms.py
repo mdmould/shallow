@@ -119,9 +119,11 @@ class StandardNormalCDF(AbstractBijection):
         return x, -jax.scipy.stats.norm.logpdf(x).sum()
 
 
-def UnivariateUnitRationalQuadraticSplineCDF(samples):
+def UnivariateUnitRationalQuadraticSplineCDF(samples, method = 'monotonic'):
     samples = jnp.asarray(samples)
     assert len(samples.shape) == 1
+
+    assert method in ('monotonic', 'monotonic-0')
 
     bounds = jnp.array([0, 1])
     assert samples.min() >= bounds[0]
@@ -129,7 +131,7 @@ def UnivariateUnitRationalQuadraticSplineCDF(samples):
 
     points = jnp.unique(jnp.append(samples, bounds))
     cdfs = jnp.linspace(0, 1, points.size)
-    interp = interpax.Interpolator1D(points, cdfs, method = 'monotonic')
+    interp = interpax.Interpolator1D(points, cdfs, method = method)
     derivs = interp.derivs['fx']
 
     rqs = RationalQuadraticSpline(
@@ -158,19 +160,21 @@ def _construct_bounds(bounds):
     return bounds
 
 
-def UnivariateRationalQuadraticSplineCDF(samples, bounds = None):
+def UnivariateRationalQuadraticSplineCDF(
+    samples, bounds = None, method = 'monotonic',
+):
     samples = jnp.asarray(samples)
     assert len(samples.shape) == 1
     bounds = _construct_bounds(bounds)
 
     affine = Affine(loc = bounds[0], scale = bounds[1] - bounds[0])
     unit_samples = jax.vmap(affine.inverse)(samples)
-    spline = UnivariateUnitRationalQuadraticSplineCDF(unit_samples)
+    spline = UnivariateUnitRationalQuadraticSplineCDF(unit_samples, method)
 
     return Chain([Invert(affine), spline])
 
 
-def RationalQuadraticSplineCDF(samples, bounds = None):
+def RationalQuadraticSplineCDF(samples, bounds = None, method = 'monotonic'):
     samples = jnp.asarray(samples)
     assert len(samples.shape) == 2
 
@@ -180,7 +184,7 @@ def RationalQuadraticSplineCDF(samples, bounds = None):
 
     affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
     splines = list(map(
-        UnivariateUnitRationalQuadraticSplineCDF,
+        lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
         jax.vmap(affine.inverse)(samples).T,
     ))
 
