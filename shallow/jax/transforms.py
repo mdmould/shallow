@@ -5,17 +5,19 @@ import interpax
 
 from flowjax.bijections import (
     AbstractBijection,
-    Affine as AffinePositiveScale,
     Chain,
+    Invert,
+    Stack,
+    Vmap,
+    Affine as AffinePositiveScale,
     Exp,
     Identity,
-    Invert,
     RationalQuadraticSpline,
-    Stack,
     Tanh,
 )
 
 from collections.abc import Callable
+from jaxtyping import Array
 
 
 def Affine(loc = 0, scale = 1):
@@ -84,23 +86,6 @@ def ColourAndBound(bounds = None, norms = None):
         return Chain([colour, bounder])
 
 
-# def get_post_stack1d(bounds = None, norms = None):
-#     if bounds is None and norms is None:
-#         return Identity()
-#     elif bounds is not None and norms is None:
-#         return Stack(list(map(get_bounder, bounds)))
-#     elif bounds is None and norms is not None:
-#         return Stack(list(map(lambda x: Invert(get_normer(x)), norms.T)))
-#     else:
-#         pres = []
-#         for bound, norm in zip(bounds, norms.T):
-#             bounder = get_bounder(bound)
-#             debounded_norm = jax.vmap(bounder.inverse)(norm)
-#             denormer = Invert(get_normer(debounded_norm))
-#             pres.append(Chain([denormer, bounder]))
-#         return Stack(pres)
-
-
 class StandardNormalCDF(AbstractBijection):
     shape: tuple[int, ...] = ()
     cond_shape: None = None
@@ -118,6 +103,10 @@ class StandardNormalCDF(AbstractBijection):
         x = self.inverse(y)
         return x, -jax.scipy.stats.norm.logpdf(x).sum()
 
+
+class UnivariateLinearCDF(AbstractBijection):
+    pass
+    
 
 def UnivariateUnitRationalQuadraticSplineCDF(samples, method = 'monotonic'):
     samples = jnp.asarray(samples)
@@ -183,6 +172,13 @@ def RationalQuadraticSplineCDF(samples, bounds = None, method = 'monotonic'):
     bounds = jnp.array(list(map(_construct_bounds, bounds)))
 
     affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
+
+    # splines = equinox.filter_vmap(
+    #     lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
+    # )(jax.vmap(affine.inverse)(samples).T)
+
+    # return Chain([Invert(Affine), Vmap(splines, in_axes = equinox.if_array(0))])
+    
     splines = list(map(
         lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
         jax.vmap(affine.inverse)(samples).T,
