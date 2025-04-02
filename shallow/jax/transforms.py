@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox
-import interpax
+# import interpax
 
 from flowjax.bijections import (
     AbstractBijection,
@@ -104,221 +104,221 @@ class StandardNormalCDF(AbstractBijection):
         return x, -jax.scipy.stats.norm.logpdf(x).sum()
 
 
-class UnivariateLinearCDF(AbstractBijection):
-    pass
-    
-
-def UnivariateUnitRationalQuadraticSplineCDF(samples, method = 'monotonic'):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 1
-
-    assert method in ('monotonic', 'monotonic-0')
-
-    bounds = jnp.array([0, 1])
-    assert samples.min() >= bounds[0]
-    assert samples.max() <= bounds[1]
-
-    points = jnp.unique(jnp.append(samples, bounds))
-    cdfs = jnp.linspace(0, 1, points.size)
-    interp = interpax.Interpolator1D(points, cdfs, method = method)
-    derivs = interp.derivs['fx']
-
-    rqs = RationalQuadraticSpline(
-        knots = points.size,
-        interval = (0, 1),
-        min_derivative = 0,
-        softmax_adjust = 0,
-    )
-
-    rqs = equinox.tree_at(lambda tree: tree.x_pos, rqs, points)
-    rqs = equinox.tree_at(lambda tree: tree.y_pos, rqs, cdfs)
-    rqs = equinox.tree_at(lambda tree: tree.derivatives, rqs, derivs)
-
-    return rqs
+# class UnivariateLinearCDF(AbstractBijection):
+#     pass
 
 
-def _construct_bounds(bounds):
-    if bounds is None:
-        left, right = -jnp.inf, jnp.inf
-    else:
-        assert len(bounds) == 2
-        left = -jnp.inf if bounds[0] is None else bounds[0]
-        right = jnp.inf if bounds[1] is None else bounds[1]
-    bounds = jnp.nan_to_num(jnp.unique(jnp.array([left, right])))
-    assert bounds.shape == (2,)
-    return bounds
+# def UnivariateUnitRationalQuadraticSplineCDF(samples, method = 'monotonic'):
+#     samples = jnp.asarray(samples)
+#     assert len(samples.shape) == 1
+
+#     assert method in ('monotonic', 'monotonic-0')
+
+#     bounds = jnp.array([0, 1])
+#     assert samples.min() >= bounds[0]
+#     assert samples.max() <= bounds[1]
+
+#     points = jnp.unique(jnp.append(samples, bounds))
+#     cdfs = jnp.linspace(0, 1, points.size)
+#     interp = interpax.Interpolator1D(points, cdfs, method = method)
+#     derivs = interp.derivs['fx']
+
+#     rqs = RationalQuadraticSpline(
+#         knots = points.size,
+#         interval = (0, 1),
+#         min_derivative = 0,
+#         softmax_adjust = 0,
+#     )
+
+#     rqs = equinox.tree_at(lambda tree: tree.x_pos, rqs, points)
+#     rqs = equinox.tree_at(lambda tree: tree.y_pos, rqs, cdfs)
+#     rqs = equinox.tree_at(lambda tree: tree.derivatives, rqs, derivs)
+
+#     return rqs
 
 
-def UnivariateRationalQuadraticSplineCDF(
-    samples, bounds = None, method = 'monotonic',
-):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 1
-    bounds = _construct_bounds(bounds)
-
-    affine = Affine(loc = bounds[0], scale = bounds[1] - bounds[0])
-    unit_samples = jax.vmap(affine.inverse)(samples)
-    spline = UnivariateUnitRationalQuadraticSplineCDF(unit_samples, method)
-
-    return Chain([Invert(affine), spline])
+# def _construct_bounds(bounds):
+#     if bounds is None:
+#         left, right = -jnp.inf, jnp.inf
+#     else:
+#         assert len(bounds) == 2
+#         left = -jnp.inf if bounds[0] is None else bounds[0]
+#         right = jnp.inf if bounds[1] is None else bounds[1]
+#     bounds = jnp.nan_to_num(jnp.unique(jnp.array([left, right])))
+#     assert bounds.shape == (2,)
+#     return bounds
 
 
-def RationalQuadraticSplineCDF(samples, bounds = None, method = 'monotonic'):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 2
+# def UnivariateRationalQuadraticSplineCDF(
+#     samples, bounds = None, method = 'monotonic',
+# ):
+#     samples = jnp.asarray(samples)
+#     assert len(samples.shape) == 1
+#     bounds = _construct_bounds(bounds)
 
-    bounds = [None] * samples.shape[1] if bounds is None else bounds
-    assert len(bounds) == samples.shape[1]
-    bounds = jnp.array(list(map(_construct_bounds, bounds)))
+#     affine = Affine(loc = bounds[0], scale = bounds[1] - bounds[0])
+#     unit_samples = jax.vmap(affine.inverse)(samples)
+#     spline = UnivariateUnitRationalQuadraticSplineCDF(unit_samples, method)
 
-    affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
-
-    # splines = equinox.filter_vmap(
-    #     lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
-    # )(jax.vmap(affine.inverse)(samples).T)
-
-    # return Chain([Invert(Affine), Vmap(splines, in_axes = equinox.if_array(0))])
-    
-    splines = list(map(
-        lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
-        jax.vmap(affine.inverse)(samples).T,
-    ))
-
-    return Chain([Invert(affine), Stack(splines)])
+#     return Chain([Invert(affine), spline])
 
 
-class UnivariateCubicSplineCDF(AbstractBijection):
-    shape: tuple
-    cond_shape: None = None
-    _interp: interpax.Interpolator1D
+# def RationalQuadraticSplineCDF(samples, bounds = None, method = 'monotonic'):
+#     samples = jnp.asarray(samples)
+#     assert len(samples.shape) == 2
 
-    def __init__(self, samples, bounds = None):
-        from interpax._coefs import A_CUBIC
+#     bounds = [None] * samples.shape[1] if bounds is None else bounds
+#     assert len(bounds) == samples.shape[1]
+#     bounds = jnp.array(list(map(_construct_bounds, bounds)))
 
-        assert len(samples.shape) == 1
-        self.shape = ()
+#     affine = Affine(loc = bounds[:, 0], scale = bounds[:, 1] - bounds[:, 0])
 
-        if bounds is None:
-            bounds = -jnp.inf, jnp.inf
-        else:
-            assert len(bounds) == 2
-            left = -jnp.inf if bounds[0] is None else bounds[0]
-            right = jnp.inf if bounds[1] is None else bounds[1]
-            bounds = left, right
-        bounds = jnp.unique(jnp.nan_to_num(jnp.array(bounds)))
-        assert bounds.shape == (2,)
-        
-        points = jnp.unique(jnp.append(samples, bounds))
-        cdf = jnp.linspace(0, 1, points.size)
-        self._interp = interpax.Interpolator1D(points, cdf, method = 'monotonic')
+#     # splines = equinox.filter_vmap(
+#     #     lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
+#     # )(jax.vmap(affine.inverse)(samples).T)
 
-    def transform(self, x, condition = None):
-        return self._interp(x)
+#     # return Chain([Invert(Affine), Vmap(splines, in_axes = equinox.if_array(0))])
 
-    def transform_and_log_det(self, x, condition = None):
-        return self.transform(x), jnp.log(jnp.abs(self._interp(x, 1)))
+#     splines = list(map(
+#         lambda x: UnivariateUnitRationalQuadraticSplineCDF(x, method),
+#         jax.vmap(affine.inverse)(samples).T,
+#     ))
 
-    def inverse(self, y, condition = None):
-        fq = y
-        x = self._interp.x
-        f = self._interp.f
-        fx = self._interp.derivs['fx']
-
-        i = jnp.searchsorted(f, fq, side = 'right')
-
-        def find_root():
-            dx = x[i] - x[i - 1]
-            dxi = jnp.where(dx == 0, 0, 1 / dx)
-
-            f0 = f[i - 1]
-            f1 = f[i]
-            fx0 = fx[i - 1] * dx
-            fx1 = fx[i] * dx
-        
-            F = jnp.stack([f0, f1, fx0, fx1])
-            coef = jnp.matmul(A_CUBIC, F)
-    
-            dt, ct, bt, at = coef
-            xi = x[i - 1]
-    
-            a = at * dxi ** 3
-            b = bt * dxi ** 2 - 3 * at * xi * dxi ** 3
-            c = ct * dxi - 2 * bt * xi * dxi ** 2 + 3 * at * xi ** 2 * dxi ** 3
-            d = dt - ct * xi * dxi + bt * xi ** 2 * dxi ** 2 - at * xi ** 3 * dxi ** 3
-
-            d = d - fq
-    
-            roots = jnp.roots(jnp.array([a, b, c, d]), strip_zeros = False)
-    
-            # p = (3 * a * c - b ** 2) / (3 * a ** 2)
-            # q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
-            # u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
-            # u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
-            # tq = jnp.cbrt(u1) + jnp.cbrt(u2)
-            # xq = tq - b / (3 * a)
-    
-            # d0 = b ** 2 - 3 * a * c
-            # d1 = 2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d
-            # cp = jnp.cbrt((d1 + jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
-            # cm = jnp.cbrt((d1 - jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
-            # C = jnp.where(cp == 0, cm, cp)
-            # d0_over_C = jnp.where(C == 0, 0, d0 / C)
-            # k = jnp.arange(3)
-            # xi = (-1 + 3 ** 0.5 * 1j) / 2
-            # roots = -(b + xi ** k * C + d0_over_C / xi ** k) / (3 * a)
-    
-            roots = jnp.where(roots.imag == 0, roots.real, jnp.inf)
-            roots = jnp.where((x[i - 1] < roots) * (roots < x[i]), roots, jnp.inf)
-            xq = jnp.min(roots)
-
-            return xq
-
-        return jax.lax.cond(fq == f[i - 1], lambda: x[i - 1], find_root)
-
-    def inverse_and_log_det(self, y, condition = None):
-        x = self.inverse(y)
-        return x, -jnp.log(jnp.abs(self._interp(x, 1)))
+#     return Chain([Invert(affine), Stack(splines)])
 
 
-def CubicSplineCDF(samples, bounds = None):
-    samples = jnp.asarray(samples)
-    assert len(samples.shape) == 2
-    bounds = [None] * samples.shape[1] if bounds is None else bounds
-    assert len(bounds) == samples.shape[1]
-    return Stack(list(map(UnivariateEmpiricalCDF, samples.T, bounds)))
+# class UnivariateCubicSplineCDF(AbstractBijection):
+#     shape: tuple
+#     cond_shape: None = None
+#     _interp: interpax.Interpolator1D
+
+#     def __init__(self, samples, bounds = None):
+#         from interpax._coefs import A_CUBIC
+
+#         assert len(samples.shape) == 1
+#         self.shape = ()
+
+#         if bounds is None:
+#             bounds = -jnp.inf, jnp.inf
+#         else:
+#             assert len(bounds) == 2
+#             left = -jnp.inf if bounds[0] is None else bounds[0]
+#             right = jnp.inf if bounds[1] is None else bounds[1]
+#             bounds = left, right
+#         bounds = jnp.unique(jnp.nan_to_num(jnp.array(bounds)))
+#         assert bounds.shape == (2,)
+
+#         points = jnp.unique(jnp.append(samples, bounds))
+#         cdf = jnp.linspace(0, 1, points.size)
+#         self._interp = interpax.Interpolator1D(points, cdf, method = 'monotonic')
+
+#     def transform(self, x, condition = None):
+#         return self._interp(x)
+
+#     def transform_and_log_det(self, x, condition = None):
+#         return self.transform(x), jnp.log(jnp.abs(self._interp(x, 1)))
+
+#     def inverse(self, y, condition = None):
+#         fq = y
+#         x = self._interp.x
+#         f = self._interp.f
+#         fx = self._interp.derivs['fx']
+
+#         i = jnp.searchsorted(f, fq, side = 'right')
+
+#         def find_root():
+#             dx = x[i] - x[i - 1]
+#             dxi = jnp.where(dx == 0, 0, 1 / dx)
+
+#             f0 = f[i - 1]
+#             f1 = f[i]
+#             fx0 = fx[i - 1] * dx
+#             fx1 = fx[i] * dx
+
+#             F = jnp.stack([f0, f1, fx0, fx1])
+#             coef = jnp.matmul(A_CUBIC, F)
+
+#             dt, ct, bt, at = coef
+#             xi = x[i - 1]
+
+#             a = at * dxi ** 3
+#             b = bt * dxi ** 2 - 3 * at * xi * dxi ** 3
+#             c = ct * dxi - 2 * bt * xi * dxi ** 2 + 3 * at * xi ** 2 * dxi ** 3
+#             d = dt - ct * xi * dxi + bt * xi ** 2 * dxi ** 2 - at * xi ** 3 * dxi ** 3
+
+#             d = d - fq
+
+#             roots = jnp.roots(jnp.array([a, b, c, d]), strip_zeros = False)
+
+#             # p = (3 * a * c - b ** 2) / (3 * a ** 2)
+#             # q = (2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d) / (27 * a ** 3)
+#             # u1 = - q / 2 + jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+#             # u2 = - q / 2 - jnp.sqrt(q ** 2 / 4 + p ** 3 / 27)
+#             # tq = jnp.cbrt(u1) + jnp.cbrt(u2)
+#             # xq = tq - b / (3 * a)
+
+#             # d0 = b ** 2 - 3 * a * c
+#             # d1 = 2 * b ** 3 - 9 * a * b * c + 27 * a ** 2 * d
+#             # cp = jnp.cbrt((d1 + jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
+#             # cm = jnp.cbrt((d1 - jnp.sqrt(d1 ** 2 - 4 * d0 ** 3)) / 2)
+#             # C = jnp.where(cp == 0, cm, cp)
+#             # d0_over_C = jnp.where(C == 0, 0, d0 / C)
+#             # k = jnp.arange(3)
+#             # xi = (-1 + 3 ** 0.5 * 1j) / 2
+#             # roots = -(b + xi ** k * C + d0_over_C / xi ** k) / (3 * a)
+
+#             roots = jnp.where(roots.imag == 0, roots.real, jnp.inf)
+#             roots = jnp.where((x[i - 1] < roots) * (roots < x[i]), roots, jnp.inf)
+#             xq = jnp.min(roots)
+
+#             return xq
+
+#         return jax.lax.cond(fq == f[i - 1], lambda: x[i - 1], find_root)
+
+#     def inverse_and_log_det(self, y, condition = None):
+#         x = self.inverse(y)
+#         return x, -jnp.log(jnp.abs(self._interp(x, 1)))
 
 
-class _CubicSplineCDF(AbstractBijection):
-    shape: tuple
-    cond_shape: None = None
-    _bijections: tuple[UnivariateCubicSplineCDF, ...]
+# def CubicSplineCDF(samples, bounds = None):
+#     samples = jnp.asarray(samples)
+#     assert len(samples.shape) == 2
+#     bounds = [None] * samples.shape[1] if bounds is None else bounds
+#     assert len(bounds) == samples.shape[1]
+#     return Stack(list(map(UnivariateEmpiricalCDF, samples.T, bounds)))
 
-    def __init__(self, samples, bounds):
-        samples = jnp.asarray(samples)
-        assert len(samples.shape) == 2
-        self.shape = (samples.shape[1],)
-        bounds = [None] * samples.shape[1] if bounds is None else bounds
-        assert len(bounds) == self.shape[0]
-        self._bijections = tuple(map(
-            UnivariateEmpiricalCDF, samples.T, bounds,
-        ))
 
-    def transform(self, x, condition = None):
-        single = lambda bijection, x: bijection.transform(x)
-        ys = list(map(single, self._bijections, x.T))
-        return jnp.stack(ys, axis = -1)
+# class _CubicSplineCDF(AbstractBijection):
+#     shape: tuple
+#     cond_shape: None = None
+#     _bijections: tuple[UnivariateCubicSplineCDF, ...]
 
-    def transform_and_log_det(self, x, condition = None):
-        single = lambda bijection, x: bijection.transform_and_log_det(x)
-        ys, log_dets = zip(*map(single, self._bijections, x.T))
-        return jnp.stack(ys, axis = -1), sum(log_dets)
+#     def __init__(self, samples, bounds):
+#         samples = jnp.asarray(samples)
+#         assert len(samples.shape) == 2
+#         self.shape = (samples.shape[1],)
+#         bounds = [None] * samples.shape[1] if bounds is None else bounds
+#         assert len(bounds) == self.shape[0]
+#         self._bijections = tuple(map(
+#             UnivariateEmpiricalCDF, samples.T, bounds,
+#         ))
 
-    def inverse(self, y, condition = None):
-        single = lambda bijection, y: bijection.inverse(y)
-        xs = list(map(single, self._bijections, y.T))
-        return jnp.stack(xs, axis = -1)
+#     def transform(self, x, condition = None):
+#         single = lambda bijection, x: bijection.transform(x)
+#         ys = list(map(single, self._bijections, x.T))
+#         return jnp.stack(ys, axis = -1)
 
-    def inverse_and_log_det(self, y, condition = None):
-        single = lambda bijection, y: bijection.inverse_and_log_det(y)
-        xs, log_dets = zip(*map(single, self._bijections, y.T))
-        return jnp.stack(xs, axis = -1), sum(log_dets)
+#     def transform_and_log_det(self, x, condition = None):
+#         single = lambda bijection, x: bijection.transform_and_log_det(x)
+#         ys, log_dets = zip(*map(single, self._bijections, x.T))
+#         return jnp.stack(ys, axis = -1), sum(log_dets)
+
+#     def inverse(self, y, condition = None):
+#         single = lambda bijection, y: bijection.inverse(y)
+#         xs = list(map(single, self._bijections, y.T))
+#         return jnp.stack(xs, axis = -1)
+
+#     def inverse_and_log_det(self, y, condition = None):
+#         single = lambda bijection, y: bijection.inverse_and_log_det(y)
+#         xs, log_dets = zip(*map(single, self._bijections, y.T))
+#         return jnp.stack(xs, axis = -1), sum(log_dets)
